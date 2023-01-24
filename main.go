@@ -1,34 +1,54 @@
 package main
 
 import (
-	"io"
-	"log"
-	"net/http"
-	"time"
+	"database/sql"
+	"fmt"
+	"os/exec"
 
-	"github.com/gorilla/mux"
+	_ "github.com/lib/pq"
 )
 
-func handler(w http.ResponseWriter, r *http.Request) {
-	io.WriteString(w, "Hello, world!\n")
-}
+const (
+	host     = "localhost"
+	port     = 5432
+	user     = "postgres"
+	password = "mypassword"
+	dbname   = "mydb"
+)
 
-// Route declaration
-func router() *mux.Router {
-	r := mux.NewRouter()
-	r.HandleFunc("/", handler)
-	return r
-}
-
-// Initiate web server
 func main() {
-	router := router()
-	srv := &http.Server{
-		Handler:      router,
-		Addr:         "127.0.0.1:9100",
-		WriteTimeout: 15 * time.Second,
-		ReadTimeout:  15 * time.Second,
+	// Connect to the PostgreSQL database
+	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable", host, port, user, password, dbname)
+	db, err := sql.Open("postgres", psqlInfo)
+	if err != nil {
+		fmt.Println("Error connecting to the database:", err)
+		return
+	}
+	defer db.Close()
+
+	// Get the Quay image tag
+	imageTag := "quay.io/myorg/myimage:latest"
+
+	// Run Syft on the image
+	syftOut, err := exec.Command("syft", "image", imageTag).Output()
+	if err != nil {
+		fmt.Println("Error running Syft:", err)
+		return
 	}
 
-	log.Fatal(srv.ListenAndServe())
+	// Run Grype on the image
+	grypeOut, err := exec.Command("grype", "image", imageTag).Output()
+	if err != nil {
+		fmt.Println("Error running Grype:", err)
+		return
+	}
+
+	// Insert the results into the "scan_results" table
+	_, err = db.Exec("INSERT INTO scan_results (image_tag, syft_output, grype_output) VALUES ($1, $2, $3)", imageTag, string(syftOut), string(grypeOut))
+	if err != nil {
+		fmt.Println("Error inserting results into the database:", err)
+		return
+	}
+
+	fmt.Println("Results stored in the database.")
 }
