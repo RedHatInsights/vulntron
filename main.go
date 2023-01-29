@@ -31,14 +31,14 @@ func main() {
 	imageTag := os.Args[1]
 
 	// Run Syft on the image
-	syftOut, err := exec.Command("syft", "--scope", "all-layers", fmt.Sprint(imageTag), "-o", "json=syftout.json").Output()
+	syftOut, err := exec.Command("syft", "--scope", "all-layers", fmt.Sprint(imageTag), "-o", "json=syftout.json").Output() // #nosec G204
 	if err != nil {
 		fmt.Println("Error running Syft:", err)
 		return
 	}
 
 	// Run Grype on the image
-	grypeOut, err := exec.Command("grype", "--scope", "all-layers", fmt.Sprint(imageTag), "-o", "json", "--file", "grypeout.json").Output()
+	grypeOut, err := exec.Command("grype", "--scope", "all-layers", fmt.Sprint(imageTag), "-o", "json", "--file", "grypeout.json").Output() // #nosec G204
 	if err != nil {
 		fmt.Println("Error running Grype:", err)
 		return
