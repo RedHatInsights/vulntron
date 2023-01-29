@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"os/exec"
 
 	_ "github.com/lib/pq"
@@ -27,17 +28,17 @@ func main() {
 	defer db.Close()
 
 	// Get the Quay image tag
-	imageTag := "quay.io/myorg/myimage:latest"
+	imageTag := os.Args[1]
 
 	// Run Syft on the image
-	syftOut, err := exec.Command("syft", "image", imageTag).Output()
+	syftOut, err := exec.Command("syft", "--scope", "all-layers", fmt.Sprint(imageTag), "-o", "json=syftout.json").Output() // #nosec G204
 	if err != nil {
 		fmt.Println("Error running Syft:", err)
 		return
 	}
 
 	// Run Grype on the image
-	grypeOut, err := exec.Command("grype", "image", imageTag).Output()
+	grypeOut, err := exec.Command("grype", "--scope", "all-layers", fmt.Sprint(imageTag), "-o", "json", "--file", "grypeout.json").Output() // #nosec G204
 	if err != nil {
 		fmt.Println("Error running Grype:", err)
 		return
