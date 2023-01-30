@@ -41,38 +41,40 @@ func main() {
 	}
 	defer consumer.Close()
 
-	msgEater, err := consumer.ConsumePartition(topic, 0, sarama.OffsetNewest)
+	partitionConsumer, err := consumer.ConsumePartition(topic, 0, sarama.OffsetNewest)
 	if err != nil {
 		fmt.Println("Error creating partition consumer:", err)
 		return
 	}
-	defer msgEater.Close()
+	defer partitionConsumer.Close()
 
-	for range msgEater.Messages() {
-		msg := <-msgEater.Messages()
-		imageTag := string(msg.Value)
-		fmt.Println("Received image tag:", imageTag)
+	for {
+		select {
+		case msg := <-partitionConsumer.Messages():
+			imageTag := string(msg.Value)
+			fmt.Println("Received image tag:", imageTag)
 
-		// Run Syft on the image
-		syftOut, err := exec.Command("syft", "--scope", "all-layers", fmt.Sprint(imageTag), "-o", "json=syftout.json").Output() // #nosec G204
-		if err != nil {
-			fmt.Println("Error running Syft:", err)
-			return
+			// Run Syft on the image
+			syftOut, err := exec.Command("syft", "--scope", "all-layers", fmt.Sprint(imageTag), "-o", "json=syftout.json").Output() // #nosec G204
+			if err != nil {
+				fmt.Println("Error running Syft:", err)
+				return
+			}
+
+			// Run Grype on the image
+			grypeOut, err := exec.Command("grype", "--scope", "all-layers", fmt.Sprint(imageTag), "-o", "json", "--file", "grypeout.json").Output() // #nosec G204
+			if err != nil {
+				fmt.Println("Error running Grype:", err)
+				return
+			}
+
+			// Insert the results into the "scan_results" table
+			_, err = db.Exec("INSERT INTO scan_results (image_tag, syft_output, grype_output) VALUES ($1, $2, $3)", imageTag, string(syftOut), string(grypeOut))
+			if err != nil {
+				fmt.Println("Error inserting results into the database:", err)
+				return
+			}
+			fmt.Println("Results stored in the database.")
 		}
-
-		// Run Grype on the image
-		grypeOut, err := exec.Command("grype", "--scope", "all-layers", fmt.Sprint(imageTag), "-o", "json", "--file", "grypeout.json").Output() // #nosec G204
-		if err != nil {
-			fmt.Println("Error running Grype:", err)
-			return
-		}
-
-		// Insert the results into the "scan_results" table
-		_, err = db.Exec("INSERT INTO scan_results (image_tag, syft_output, grype_output) VALUES ($1, $2, $3)", imageTag, string(syftOut), string(grypeOut))
-		if err != nil {
-			fmt.Println("Error inserting results into the database:", err)
-			return
-		}
-		fmt.Println("Results stored in the database.")
 	}
 }

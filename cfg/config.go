@@ -1,10 +1,10 @@
 package config
 
-import{
+import (
 	"os"
-}
+)
 
-const dbconfig (
+const (
 	host     = "localhost"
 	port     = 5432
 	user     = "postgres"
@@ -12,8 +12,7 @@ const dbconfig (
 	dbname   = "mydb"
 )
 
-const kafka (
-	brokers := []string{os.Getenv("KAFKA_BROKER")}
-	topic := os.Getenv("KAFKA_TOPIC")
-)
+brokers := []string{os.Getenv("KAFKA_BROKER")}
+topic := os.Getenv("KAFKA_TOPIC")
+
 
