@@ -8,7 +8,7 @@ build: fmt vet
 	go build -o bin/vulntron main.go
 
 run: fmt vet
-	go run
+	go run ./main.go
 	
 rundemo: fmt vet
 	go run ./main.go quay.io/cloudservices/rbac
