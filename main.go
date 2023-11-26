@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -11,6 +13,13 @@ import (
 	"time"
 
 	kafka "github.com/Shopify/sarama"
+	"github.com/anchore/clio"
+	"github.com/anchore/grype/grype"
+	grype_db "github.com/anchore/grype/grype/db"
+	"github.com/anchore/grype/grype/grypeerr"
+	"github.com/anchore/grype/grype/matcher"
+	"github.com/anchore/grype/grype/pkg"
+	"github.com/anchore/grype/grype/presenter/models"
 	"github.com/anchore/syft/syft"
 	"github.com/anchore/syft/syft/format"
 	"github.com/anchore/syft/syft/format/syftjson"
@@ -33,14 +42,14 @@ func debugPrint(format string, args ...interface{}) {
 	fmt.Println(message)
 }
 
-func generateSyftFileName(value string) string {
+func generateFileName(value string, input string) string {
 	lastElement := value
 	if parts := strings.Split(value, "/"); len(parts) > 0 {
 		lastElement = parts[len(parts)-1]
 	}
 
 	currentTime := time.Now().Format("2006-01-02_15:04:05")
-	return fmt.Sprintf("%s_syft_%s_.json", lastElement, currentTime)
+	return fmt.Sprintf("%s_%s_%s_.json", lastElement, input, currentTime)
 }
 
 // ConsumerGroupHandler represents a Sarama consumer group consumer
@@ -52,11 +61,133 @@ func (ConsumerGroupHandler) Setup(kafka.ConsumerGroupSession) error { return nil
 // Cleanup is run at the end of a session, once all ConsumeClaim goroutines have exited
 func (ConsumerGroupHandler) Cleanup(kafka.ConsumerGroupSession) error { return nil }
 
+func runGrype(message string) {
+	// TODO: make `loading DB` and `gathering packages` work in parallel
+	// https://github.com/anchore/grype/blob/7e8ee40996ba3a4defb5e887ab0177d99cd0e663/cmd/root.go#L240
+
+	dbConfig := grype_db.Config{
+		DBRootDir:           "/tmp/",
+		ListingURL:          "https://toolbox-data.anchore.io/grype/databases/listing.json",
+		ValidateByHashOnGet: false,
+	}
+
+	store, dbStatus, _, err := grype.LoadVulnerabilityDB(dbConfig, true)
+	if err != nil {
+		fmt.Print("failed to load vulnerability DB: %w", err)
+		os.Exit(1)
+	}
+
+	debugPrint("Running grype for message: %s\n", message)
+	var imageTag string = string(message)
+
+	scope, err := source.Detect(imageTag, source.DefaultDetectConfig())
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	debugPrint("Detected source: %s", scope)
+
+	src, err := scope.NewSource(source.DefaultDetectionSourceConfig())
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
+	result := sbom.SBOM{
+		Source: src.Describe(),
+		Descriptor: sbom.Descriptor{
+			Name:    "syft",
+			Version: "0.96.0",
+		},
+		// TODO: automate
+	}
+
+	cfg := cataloger.DefaultConfig()
+	cfg.Search.Scope = source.AllLayersScope
+
+	packageCatalog, relationships, theDistro, err := syft.CatalogPackages(src, cfg)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
+	result.Artifacts.Packages = packageCatalog
+	result.Artifacts.LinuxDistribution = theDistro
+	result.Relationships = relationships
+
+	providerConfig := pkg.ProviderConfig{
+		SyftProviderConfig: pkg.SyftProviderConfig{
+			CatalogingOptions: cataloger.Config{
+				Search: cataloger.DefaultSearchConfig(),
+			},
+			RegistryOptions: source.DefaultDetectionSourceConfig().RegistryOptions,
+		},
+	}
+	providerConfig.CatalogingOptions.Search.Scope = source.AllLayersScope
+
+	packages, context, _, err := pkg.Provide(message, providerConfig)
+	if err != nil {
+		fmt.Print("failed to analyze packages: %w", err)
+		return
+	}
+
+	vulnerabilityMatcher := grype.VulnerabilityMatcher{
+		Store:          *store,
+		Matchers:       matcher.NewDefaultMatchers(matcher.Config{}),
+		NormalizeByCVE: true,
+	}
+
+	allMatches, ignoredMatches, err := vulnerabilityMatcher.FindMatches(packages, context)
+
+	// We can ignore ErrAboveSeverityThreshold since we are not setting the FailSeverity on the matcher.
+	if err != nil && !errors.Is(err, grypeerr.ErrAboveSeverityThreshold) {
+		fmt.Print("failed to find vulnerabilities: %w", err)
+		return
+	}
+
+	id := clio.Identification{
+		Name:    "awesome",
+		Version: "v1.0.0",
+	}
+
+	doc, err := models.NewDocument(id, packages, context, *allMatches, ignoredMatches, store.MetadataProvider, nil, dbStatus)
+	if err != nil {
+		fmt.Print("failed to create document: %w", err)
+		return
+	}
+
+	// Encode the scan results to JSON.
+	syftOut, err := json.Marshal(doc.Matches)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
+	// Create or open the file with the last element as the name
+	fileName := generateFileName(string(message), "grype")
+	file, err := os.Create(fileName)
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+
+	// Write syftOut content to the file
+	_, err = file.Write(syftOut)
+	if err != nil {
+		panic(err)
+	}
+
+}
+
 // runSyft goroutine
+/*
 func runSyft(message *kafka.ConsumerMessage) {
-	// Implement your logic here
 	debugPrint("Running syft for message: %s\n", message.Value)
 	var imageTag string = string(message.Value)
+*/
+func runSyft(message string) {
+	debugPrint("Running syft for message: %s\n", message)
+	var imageTag string = string(message)
 
 	scope, err := source.Detect(imageTag, source.DefaultDetectConfig())
 	if err != nil {
@@ -109,7 +240,7 @@ func runSyft(message *kafka.ConsumerMessage) {
 	//fmt.Print(string(syftOut))
 
 	// Create or open the file with the last element as the name
-	fileName := generateSyftFileName(string(message.Value))
+	fileName := generateFileName(string(message), "syft")
 	file, err := os.Create(fileName)
 	if err != nil {
 		panic(err)
@@ -137,7 +268,8 @@ func (ConsumerGroupHandler) ConsumeClaim(session kafka.ConsumerGroupSession, cla
 			session.MarkMessage(message, "")
 
 			// Call the runSyft function for each consumed message
-			runSyft(message)
+			//runSyft(message)
+			//runGrype(message)
 		}(message)
 	}
 
@@ -147,78 +279,80 @@ func (ConsumerGroupHandler) ConsumeClaim(session kafka.ConsumerGroupSession, cla
 	return nil
 }
 
+var (
+	runType string
+)
+
+func init() {
+	// Define command-line flags
+	flag.StringVar(&runType, "type", "auto", "Message type: kafka or auto")
+}
+
 func main() {
-	// Connect to the PostgreSQL database
-	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable", host, port, user, password, dbname)
-	fmt.Println("PSQL config: ", psqlInfo)
+	flag.Parse()
 
-	db, err := sql.Open("postgres", psqlInfo)
-	if err != nil {
-		fmt.Println("Error connecting to the database:", err)
-		return
-	}
-	defer db.Close()
+	// Check the value of the -type flag
+	switch runType {
+	case "kafka":
+		fmt.Println("Selected message type: Kafka")
+		config := kafka.NewConfig()
+		config.Consumer.Return.Errors = true
+		config.Consumer.Offsets.Initial = kafka.OffsetOldest
+		brokers := []string{os.Getenv("KAFKA_BROKER")}
+		topic := []string{os.Getenv("KAFKA_TOPIC")}
+		consumergroup := "console-consumer-28827"
 
-	// Get the Quay image tag from the command line (for practice)
-	//imageTag := os.Args[1]
+		debugPrint("Brokers: %s", brokers)
+		debugPrint("Consumer group: %s", consumergroup)
 
-	config := kafka.NewConfig()
-	config.Consumer.Return.Errors = true
-	config.Consumer.Offsets.Initial = kafka.OffsetOldest
-	brokers := []string{os.Getenv("KAFKA_BROKER")}
-	topic := []string{os.Getenv("KAFKA_TOPIC")}
-	consumergroup := "console-consumer-28827"
-
-	debugPrint("Brokers: %s", brokers)
-	debugPrint("Consumer group: %s", consumergroup)
-
-	group, err := kafka.NewConsumerGroup(brokers, consumergroup, config)
-	if err != nil {
-		panic(err)
-	}
-	defer func() { _ = group.Close() }()
-
-	// Track errors
-	go func() {
-		for err := range group.Errors() {
-			fmt.Println("ERROR", err)
-		}
-	}()
-
-	// Iterate over consumer sessions.
-	ctx := context.Background()
-	for {
-		handler := ConsumerGroupHandler{}
-
-		// `Consume` should be called inside an infinite loop, when a
-		// server-side rebalance happens, the consumer session will need to be
-		// recreated to get the new claims
-		err := group.Consume(ctx, topic, handler)
+		group, err := kafka.NewConsumerGroup(brokers, consumergroup, config)
 		if err != nil {
 			panic(err)
 		}
+		defer func() { _ = group.Close() }()
+
+		// Track errors
+		go func() {
+			for err := range group.Errors() {
+				fmt.Println("ERROR", err)
+			}
+		}()
+
+		// Iterate over consumer sessions.
+		ctx := context.Background()
+		for {
+			handler := ConsumerGroupHandler{}
+
+			// `Consume` should be called inside an infinite loop, when a
+			// server-side rebalance happens, the consumer session will need to be
+			// recreated to get the new claims
+			err := group.Consume(ctx, topic, handler)
+			if err != nil {
+				panic(err)
+			}
+		}
+
+	case "auto":
+		fmt.Println("Selected message type: Auto")
+		// Connect to the PostgreSQL database
+		psqlInfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable", host, port, user, password, dbname)
+		fmt.Println("PSQL config: ", psqlInfo)
+
+		db, err := sql.Open("postgres", psqlInfo)
+		if err != nil {
+			fmt.Println("Error connecting to the database:", err)
+			return
+		}
+		defer db.Close()
+
+		// Get the Quay image tag from the command line (for practice)
+		imageTag := os.Args[3]
+		//runSyft(imageTag)
+		runGrype(imageTag)
+
+	default:
+		fmt.Println("Invalid message type. Please use either 'kafka' or 'auto'.")
+		os.Exit(1)
 	}
+
 }
-
-/*
-
-	// Run Grype on the image
-	grypeOut, err := exec.Command("grype", "--scope", "all-layers", fmt.Sprint(imageTag), "-o", "json", "--file", "grypeout.json").Output() // #nosec G204
-	if err != nil {
-		fmt.Println("Error running Grype:", err)
-		return
-	}
-
-	// Insert the results into the "scan_results" table
-	_, err = db.Exec("INSERT INTO scan_results (image_tag, syft_output, grype_output) VALUES ($1, $2, $3)", imageTag, string(syftOut), string(grypeOut))
-	if err != nil {
-		fmt.Println("Error inserting results into the database:", err)
-		return
-	}
-	fmt.Println("Results stored in the database.")
-
-*/
-/*
-	}
-}
-*/

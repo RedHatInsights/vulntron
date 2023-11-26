@@ -13,6 +13,9 @@ run: fmt vet
 rundemo: fmt vet
 	go run ./main.go quay.io/cloudservices/rbac
 
+runautodemo: fmt vet
+	go run ./main.go -type auto quay.io/cloudservices/rbac
+
 clean:
 	go clean 
 	rm Vulntron
