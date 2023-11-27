@@ -37,12 +37,14 @@ const (
 	dbname   = "mydb"
 )
 
+// DebugPrint prints debug messages
 func debugPrint(format string, args ...interface{}) {
 	message := fmt.Sprintf("DEBUG: "+format, args...)
 	fmt.Println(message)
 }
 
-func generateFileName(value string, input string) string {
+// GenerateFileName generates a file name based on value and input
+func generateFileName(value, input string) string {
 	lastElement := value
 	if parts := strings.Split(value, "/"); len(parts) > 0 {
 		lastElement = parts[len(parts)-1]
@@ -50,6 +52,16 @@ func generateFileName(value string, input string) string {
 
 	currentTime := time.Now().Format("2006-01-02_15:04:05")
 	return fmt.Sprintf("%s_%s_%s_.json", lastElement, input, currentTime)
+}
+
+// handleErr prints an error message and returns true if the error is not nil
+func handleErr(message string, err error) bool {
+	if err != nil {
+		fmt.Printf("%s: %v\n", message, err)
+		os.Exit(1)
+		return true
+	}
+	return false
 }
 
 // ConsumerGroupHandler represents a Sarama consumer group consumer
@@ -72,25 +84,22 @@ func runGrype(message string) {
 	}
 
 	store, dbStatus, _, err := grype.LoadVulnerabilityDB(dbConfig, true)
-	if err != nil {
-		fmt.Print("failed to load vulnerability DB: %w", err)
-		os.Exit(1)
+	if handleErr("failed to load vulnerability DB", err) {
+		return
 	}
 
 	debugPrint("Running grype for message: %s\n", message)
-	var imageTag string = string(message)
+	imageTag := string(message)
 
 	scope, err := source.Detect(imageTag, source.DefaultDetectConfig())
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+	if handleErr("failed to detect source", err) {
+		return
 	}
 	debugPrint("Detected source: %s", scope)
 
 	src, err := scope.NewSource(source.DefaultDetectionSourceConfig())
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+	if handleErr("failed to create source", err) {
+		return
 	}
 
 	result := sbom.SBOM{
@@ -106,9 +115,8 @@ func runGrype(message string) {
 	cfg.Search.Scope = source.AllLayersScope
 
 	packageCatalog, relationships, theDistro, err := syft.CatalogPackages(src, cfg)
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+	if handleErr("failed to catalog packages", err) {
+		return
 	}
 
 	result.Artifacts.Packages = packageCatalog
@@ -126,8 +134,7 @@ func runGrype(message string) {
 	providerConfig.CatalogingOptions.Search.Scope = source.AllLayersScope
 
 	packages, context, _, err := pkg.Provide(message, providerConfig)
-	if err != nil {
-		fmt.Print("failed to analyze packages: %w", err)
+	if handleErr("failed to analyze packages", err) {
 		return
 	}
 
@@ -141,7 +148,7 @@ func runGrype(message string) {
 
 	// We can ignore ErrAboveSeverityThreshold since we are not setting the FailSeverity on the matcher.
 	if err != nil && !errors.Is(err, grypeerr.ErrAboveSeverityThreshold) {
-		fmt.Print("failed to find vulnerabilities: %w", err)
+		handleErr("failed to find vulnerabilities", err)
 		return
 	}
 
@@ -151,32 +158,27 @@ func runGrype(message string) {
 	}
 
 	doc, err := models.NewDocument(id, packages, context, *allMatches, ignoredMatches, store.MetadataProvider, nil, dbStatus)
-	if err != nil {
-		fmt.Print("failed to create document: %w", err)
+	if handleErr("failed to create document", err) {
 		return
 	}
 
 	// Encode the scan results to JSON.
 	syftOut, err := json.Marshal(doc.Matches)
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+	if handleErr("failed to marshal JSON", err) {
+		return
 	}
 
 	// Create or open the file with the last element as the name
-	fileName := generateFileName(string(message), "grype")
+	fileName := generateFileName(imageTag, "grype")
 	file, err := os.Create(fileName)
-	if err != nil {
-		panic(err)
+	if handleErr("failed to create or open file", err) {
+		return
 	}
 	defer file.Close()
 
 	// Write syftOut content to the file
 	_, err = file.Write(syftOut)
-	if err != nil {
-		panic(err)
-	}
-
+	handleErr("failed to write to file", err)
 }
 
 // runSyft goroutine
@@ -187,19 +189,17 @@ func runSyft(message *kafka.ConsumerMessage) {
 */
 func runSyft(message string) {
 	debugPrint("Running syft for message: %s\n", message)
-	var imageTag string = string(message)
+	imageTag := string(message)
 
 	scope, err := source.Detect(imageTag, source.DefaultDetectConfig())
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+	if handleErr("failed to detect source", err) {
+		return
 	}
 	debugPrint("Detected source: %s", scope)
 
 	src, err := scope.NewSource(source.DefaultDetectionSourceConfig())
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+	if handleErr("failed to create source", err) {
+		return
 	}
 
 	result := sbom.SBOM{
@@ -208,16 +208,14 @@ func runSyft(message string) {
 			Name:    "syft",
 			Version: "0.96.0",
 		},
-		// TODO: automate
 	}
 
 	cfg := cataloger.DefaultConfig()
 	cfg.Search.Scope = source.AllLayersScope
 
 	packageCatalog, relationships, theDistro, err := syft.CatalogPackages(src, cfg)
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+	if handleErr("failed to catalog packages", err) {
+		return
 	}
 
 	result.Artifacts.Packages = packageCatalog
@@ -225,34 +223,27 @@ func runSyft(message string) {
 	result.Relationships = relationships
 
 	b, err := format.Encode(result, syftjson.NewFormatEncoder())
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+	if handleErr("failed to encode result", err) {
+		return
 	}
 
 	// Encode the scan results to JSON.
 	syftOut, err := json.Marshal(string(b))
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+	if handleErr("failed to marshal JSON", err) {
+		return
 	}
 
-	//fmt.Print(string(syftOut))
-
 	// Create or open the file with the last element as the name
-	fileName := generateFileName(string(message), "syft")
+	fileName := generateFileName(imageTag, "syft")
 	file, err := os.Create(fileName)
-	if err != nil {
-		panic(err)
+	if handleErr("failed to create or open file", err) {
+		return
 	}
 	defer file.Close()
 
 	// Write syftOut content to the file
 	_, err = file.Write(syftOut)
-	if err != nil {
-		panic(err)
-	}
-
+	handleErr("failed to write to file", err)
 }
 
 // ConsumeClaim must start a consumer loop of ConsumerGroupClaim's Messages().
@@ -347,7 +338,7 @@ func main() {
 
 		// Get the Quay image tag from the command line (for practice)
 		imageTag := os.Args[3]
-		//runSyft(imageTag)
+		runSyft(imageTag)
 		runGrype(imageTag)
 
 	default:
