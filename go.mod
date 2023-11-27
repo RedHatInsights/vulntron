@@ -6,6 +6,7 @@ toolchain go1.21.3
 
 require (
 	github.com/Shopify/sarama v1.38.1
+	github.com/anchore/clio v0.0.0-20231016125544-c98a83e1c7fc
 	github.com/anchore/grype v0.73.3
 	github.com/anchore/syft v0.97.1
 	github.com/lib/pq v1.10.7
@@ -29,7 +30,6 @@ require (
 	github.com/acobaugh/osrelease v0.1.0 // indirect
 	github.com/acomagu/bufpipe v1.0.4 // indirect
 	github.com/adrg/xdg v0.4.0 // indirect
-	github.com/anchore/clio v0.0.0-20231016125544-c98a83e1c7fc // indirect
 	github.com/anchore/fangs v0.0.0-20231106214039-d96c8f312db4 // indirect
 	github.com/anchore/go-logger v0.0.0-20230725134548-c21dafa1ec5a // indirect
 	github.com/anchore/go-macholibre v0.0.0-20220308212642-53e6d0aaf6fb // indirect
