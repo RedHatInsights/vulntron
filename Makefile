@@ -14,7 +14,7 @@ rundemo: fmt vet
 	go run ./main.go quay.io/cloudservices/rbac
 
 runautodemo: fmt vet
-	go run ./main.go -type auto quay.io/cloudservices/rbac
+	go run ./main.go --type auto --config config.yaml --imagename tomcat --timestamp "Sun, 03 Dec 2023 15:32:07 +0100" --component "tc"
 
 clean:
 	go clean 

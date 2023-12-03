@@ -1,0 +1,10 @@
+# syft configuration
+syft:
+  db_root_dir: "/tmp/"
+  validate_by_hash_on_get: false
+
+# grype configuration
+grype:
+  db_root_dir: "/tmp/"
+  listing_url: "https://toolbox-data.anchore.io/grype/databases/listing.json"
+  validate_by_hash_on_get: false

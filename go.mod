@@ -10,6 +10,7 @@ require (
 	github.com/anchore/grype v0.73.3
 	github.com/anchore/syft v0.97.1
 	github.com/lib/pq v1.10.7
+	gopkg.in/yaml.v2 v2.4.0
 )
 
 require (
