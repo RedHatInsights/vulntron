@@ -19,9 +19,21 @@ type GrypeConfig struct {
 	ValidateByHashOnGet bool   `yaml:"validate_by_hash_on_get"`
 }
 
+type LoaderConfig struct {
+	ServerURL string `yaml:"serverURL"`
+	Namespace string `yaml:"namespace"`
+	Token     string `yaml:"token"`
+}
+
+type VulntronConfig struct {
+	SaveJson bool `yaml:"save_json"`
+}
+
 type Config struct {
-	Syft  SyftConfig  `yaml:"syft"`
-	Grype GrypeConfig `yaml:"grype"`
+	Syft     SyftConfig     `yaml:"syft"`
+	Grype    GrypeConfig    `yaml:"grype"`
+	Loader   LoaderConfig   `yaml:"loader"`
+	Vulntron VulntronConfig `yaml:"vulntron"`
 }
 
 func ReadConfig(filename string) (Config, error) {

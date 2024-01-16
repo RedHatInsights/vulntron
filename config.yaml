@@ -1,10 +1,19 @@
+vulntron:
+  save_json: false
+
 # syft configuration
 syft:
-  db_root_dir: "/tmp/"
+  db_root_dir: "/tmp/vuln/"
   validate_by_hash_on_get: false
 
 # grype configuration
 grype:
-  db_root_dir: "/tmp/"
+  db_root_dir: "/tmp/vuln/"
   listing_url: "https://toolbox-data.anchore.io/grype/databases/listing.json"
   validate_by_hash_on_get: false
+
+loader:
+  serverURL: "https://api.crcd01ue1.zmsj.p1.openshiftapps.com:6443"
+  namespace: "ephemeral-zuonzq"
+  token: "sha256~"
+  

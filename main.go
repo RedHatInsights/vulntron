@@ -7,26 +7,19 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/RedHatInsights/Vulntron/config"
+	"github.com/RedHatInsights/Vulntron/internal/config"
+	"github.com/RedHatInsights/Vulntron/internal/utils"
+	"github.com/RedHatInsights/Vulntron/internal/vulntron_grype"
+	"github.com/RedHatInsights/Vulntron/internal/vulntron_syft"
 
 	kafka "github.com/Shopify/sarama"
-	"github.com/anchore/clio"
-	"github.com/anchore/grype/grype"
-	grype_db "github.com/anchore/grype/grype/db"
-	"github.com/anchore/grype/grype/matcher"
-	"github.com/anchore/grype/grype/pkg"
-	"github.com/anchore/grype/grype/presenter/models"
-	"github.com/anchore/syft/syft"
-	"github.com/anchore/syft/syft/format"
-	"github.com/anchore/syft/syft/format/syftjson"
-	"github.com/anchore/syft/syft/pkg/cataloger"
-	"github.com/anchore/syft/syft/sbom"
-	"github.com/anchore/syft/syft/source"
 	_ "github.com/lib/pq"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 const (
@@ -37,31 +30,15 @@ const (
 	dbname   = "vulntrondb"
 )
 
-// DebugPrint prints debug messages
-func debugPrint(format string, args ...interface{}) {
-	message := fmt.Sprintf("DEBUG: "+format, args...)
-	fmt.Println(message)
+type ContainerInfo struct {
+	Container string `json:"Container"`
+	Image     string `json:"Image"`
+	StartTime string `json:"StartTime"`
 }
-
-// GenerateFileName generates a file name based on value and input
-func generateFileName(value, input string) string {
-	lastElement := value
-	if parts := strings.Split(value, "/"); len(parts) > 0 {
-		lastElement = parts[len(parts)-1]
-	}
-
-	currentTime := time.Now().Format("2006-01-02_15:04:05")
-	return fmt.Sprintf("%s_%s_%s.json", lastElement, input, currentTime)
-}
-
-// handleErr prints an error message and returns true if the error is not nil
-func handleErr(message string, err error) bool {
-	if err != nil {
-		fmt.Printf("%s: %v\n", message, err)
-		os.Exit(1)
-		return true
-	}
-	return false
+type PodInfo struct {
+	Pod        string          `json:"Pod"`
+	Namespace  string          `json:"Namespace"`
+	Containers []ContainerInfo `json:"Containers"`
 }
 
 // ConsumerGroupHandler represents a Sarama consumer group consumer
@@ -72,192 +49,6 @@ func (ConsumerGroupHandler) Setup(kafka.ConsumerGroupSession) error { return nil
 
 // Cleanup is run at the end of a session, once all ConsumeClaim goroutines have exited
 func (ConsumerGroupHandler) Cleanup(kafka.ConsumerGroupSession) error { return nil }
-
-func runGrype(config config.GrypeConfig, message string) (string, error) {
-	// TODO: make `loading DB` and `gathering packages` work in parallel
-	// https://github.com/anchore/grype/blob/7e8ee40996ba3a4defb5e887ab0177d99cd0e663/cmd/root.go#L240
-
-	dbConfig := grype_db.Config{
-		DBRootDir:           config.DBRootDir,
-		ListingURL:          config.ListingURL,
-		ValidateByHashOnGet: config.ValidateByHashOnGet,
-	}
-
-	store, dbStatus, _, err := grype.LoadVulnerabilityDB(dbConfig, true)
-	if err != nil {
-		return "", fmt.Errorf("failed to load vulnerability DB: %w", err)
-	}
-
-	debugPrint("Running grype for message: %s\n", message)
-	imageTag := string(message)
-
-	scope, err := source.Detect(imageTag, source.DefaultDetectConfig())
-	if err != nil {
-		return "", fmt.Errorf("failed to detect source: %w", err)
-	}
-
-	debugPrint("Detected source: %s", scope)
-
-	src, err := scope.NewSource(source.DefaultDetectionSourceConfig())
-	if err != nil {
-		return "", fmt.Errorf("failed to create source: %w", err)
-	}
-
-	result := sbom.SBOM{
-		Source: src.Describe(),
-		Descriptor: sbom.Descriptor{
-			Name:    "syft",
-			Version: "0.96.0",
-		},
-		// TODO: automate
-	}
-
-	cfg := cataloger.DefaultConfig()
-	cfg.Search.Scope = source.AllLayersScope
-
-	packageCatalog, relationships, theDistro, err := syft.CatalogPackages(src, cfg)
-	if err != nil {
-		return "", fmt.Errorf("failed to catalog packages: %w", err)
-	}
-
-	result.Artifacts.Packages = packageCatalog
-	result.Artifacts.LinuxDistribution = theDistro
-	result.Relationships = relationships
-
-	providerConfig := pkg.ProviderConfig{
-		SyftProviderConfig: pkg.SyftProviderConfig{
-			CatalogingOptions: cataloger.Config{
-				Search: cataloger.DefaultSearchConfig(),
-			},
-			RegistryOptions: source.DefaultDetectionSourceConfig().RegistryOptions,
-		},
-	}
-	providerConfig.CatalogingOptions.Search.Scope = source.AllLayersScope
-
-	packages, context, _, err := pkg.Provide(message, providerConfig)
-	if err != nil {
-		return "", fmt.Errorf("failed to analyze packages: %w", err)
-	}
-
-	vulnerabilityMatcher := grype.VulnerabilityMatcher{
-		Store:          *store,
-		Matchers:       matcher.NewDefaultMatchers(matcher.Config{}),
-		NormalizeByCVE: true,
-	}
-
-	allMatches, ignoredMatches, err := vulnerabilityMatcher.FindMatches(packages, context)
-
-	// We can ignore ErrAboveSeverityThreshold since we are not setting the FailSeverity on the matcher.
-	if err != nil {
-		return "", fmt.Errorf("failed to find vulnerabilities: %w", err)
-	}
-	id := clio.Identification{
-		Name:    "awesome",
-		Version: "v1.0.0",
-	}
-
-	doc, err := models.NewDocument(id, packages, context, *allMatches, ignoredMatches, store.MetadataProvider, nil, dbStatus)
-	if err != nil {
-		return "", fmt.Errorf("failed to create document: %w", err)
-	}
-	// Encode the scan results to JSON.
-	syftOut, err := json.Marshal(doc.Matches)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal JSON: %w", err)
-	}
-
-	// Create or open the file with the last element as the name
-	fileName := generateFileName(imageTag, "grype")
-	file, err := os.Create(fileName)
-	if err != nil {
-		return "", fmt.Errorf("failed to create or open file: %w", err)
-	}
-	defer file.Close()
-
-	// Write syftOut content to the file
-	_, err = file.Write(syftOut)
-	if err != nil {
-		return "", fmt.Errorf("failed to write to file: %w", err)
-	}
-
-	debugPrint("JSON grype data has been written to %s", fileName)
-
-	// Return JSON output
-	return string(syftOut), nil
-}
-
-func runSyft(config config.SyftConfig, message string) (string, error) {
-	debugPrint("Running syft for message: %s\n", message)
-	imageTag := string(message)
-
-	scope, err := source.Detect(imageTag, source.DefaultDetectConfig())
-	if err != nil {
-		return "", fmt.Errorf("failed to detect source: %w", err)
-	}
-	debugPrint("Detected source: %s", scope)
-
-	src, err := scope.NewSource(source.DefaultDetectionSourceConfig())
-	if err != nil {
-		return "", fmt.Errorf("failed to create source: %w", err)
-	}
-
-	result := sbom.SBOM{
-		Source: src.Describe(),
-		Descriptor: sbom.Descriptor{
-			Name:    "syft",
-			Version: "0.96.0",
-		},
-	}
-
-	cfg := cataloger.DefaultConfig()
-	cfg.Search.Scope = source.AllLayersScope
-
-	packageCatalog, relationships, theDistro, err := syft.CatalogPackages(src, cfg)
-	if err != nil {
-		return "", fmt.Errorf("failed to catalog packages: %w", err)
-	}
-
-	result.Artifacts.Packages = packageCatalog
-	result.Artifacts.LinuxDistribution = theDistro
-	result.Relationships = relationships
-
-	b, err := format.Encode(result, syftjson.NewFormatEncoder())
-	if err != nil {
-		return "", fmt.Errorf("failed to encode result: %w", err)
-	}
-
-	// Create or open the file with the last element as the name
-	fileName := generateFileName(imageTag, "syft")
-	file, err := os.Create(fileName)
-	if err != nil {
-		return "", fmt.Errorf("failed to create or open file: %w", err)
-	}
-	defer file.Close()
-
-	// Parse the JSON string
-	var data interface{}
-	err = json.Unmarshal([]byte(b), &data)
-	if err != nil {
-		return "", fmt.Errorf("failed to unmarshal JSON: %w", err)
-	}
-
-	// MarshalIndent for human-readable JSON with an indentation of 2 spaces
-	indentedJSON, err := json.MarshalIndent(data, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal JSON: %w", err)
-	}
-
-	// Write the indented JSON to the file
-	_, err = file.Write(indentedJSON)
-	if err != nil {
-		return "", fmt.Errorf("failed to write JSON to file: %w", err)
-	}
-
-	debugPrint("JSON syft data has been written to %s", fileName)
-
-	// Return JSON output
-	return string(indentedJSON), nil
-}
 
 // ConsumeClaim must start a consumer loop of ConsumerGroupClaim's Messages().
 func (ConsumerGroupHandler) ConsumeClaim(session kafka.ConsumerGroupSession, claim kafka.ConsumerGroupClaim) error {
@@ -293,9 +84,9 @@ var (
 )
 
 func init() {
-	// Define command-line flags
+	// Command-line flags
 	flag.StringVar(&cfgFile, "config", "config.yaml", "Config file")
-	flag.StringVar(&runType, "type", "auto", "Message type: kafka or auto")
+	flag.StringVar(&runType, "type", "auto", "Message type: kafka or auto or single")
 	flag.StringVar(&timestamp, "timestamp", "", "Timestamp")
 	flag.StringVar(&imageName, "imagename", "", "Image name")
 	flag.StringVar(&component, "component", "", "Component name")
@@ -333,8 +124,8 @@ func main() {
 		topic := []string{os.Getenv("KAFKA_TOPIC")}
 		consumergroup := "console-consumer-28827"
 
-		debugPrint("Brokers: %s", brokers)
-		debugPrint("Consumer group: %s", consumergroup)
+		utils.DebugPrint("Brokers: %s", brokers)
+		utils.DebugPrint("Consumer group: %s", consumergroup)
 
 		group, err := kafka.NewConsumerGroup(brokers, consumergroup, config)
 		if err != nil {
@@ -364,30 +155,116 @@ func main() {
 		}
 
 	case "auto":
-		fmt.Println("Selected message type: Auto")
+		utils.DebugPrint("Selected message type: Auto")
+
+		// Create a rest.Config object
+		oc_config := &rest.Config{
+			Host:        config.Loader.ServerURL,
+			BearerToken: config.Loader.Token,
+		}
+
+		// Create a Kubernetes clientset using the rest.Config
+		clientset, err := kubernetes.NewForConfig(oc_config)
+		if err != nil {
+			fmt.Printf("Error creating Kubernetes client: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Example: List Pods in the specified namespace
+		pods, err := clientset.CoreV1().Pods(config.Loader.Namespace).List(context.TODO(), metav1.ListOptions{})
+		if err != nil {
+			fmt.Printf("Error listing pods: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Create a slice to hold the PodInfo objects
+		var podInfos []PodInfo
+
+		// Iterate through each pod and populate the PodInfo structure
+		for _, pod := range pods.Items {
+			var containerInfos []ContainerInfo
+			for _, container := range pod.Spec.Containers {
+				containerInfo := ContainerInfo{
+					Container: container.Name,
+					Image:     container.Image,
+					StartTime: pod.Status.StartTime.Time.Format("2006-01-02T15:04:05Z"),
+				}
+				containerInfos = append(containerInfos, containerInfo)
+			}
+
+			podInfo := PodInfo{
+				Pod:        pod.Name,
+				Namespace:  pod.Namespace,
+				Containers: containerInfos,
+			}
+			podInfos = append(podInfos, podInfo)
+		}
+
+		// Convert podInfos to JSON
+		podsJSON, err := json.MarshalIndent(podInfos, "", "  ")
+		if err != nil {
+			fmt.Printf("Error marshaling podInfos to JSON: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Println(string(podsJSON))
+
+		// Loop through each pod and run Syft and Grype for each container's image
+		for _, pod := range podInfos {
+			for _, container := range pod.Containers {
+
+				// Run Syft
+				syftOutput, err := vulntron_syft.RunSyft(config.Vulntron, container.Image)
+				if err != nil {
+					fmt.Printf("Error running Syft for image %s: %v\n", container.Image, err)
+					continue
+				}
+
+				// Run Grype
+				grypeOutput, err := vulntron_grype.RunGrype(config.Grype, config.Vulntron, container.Image)
+				if err != nil {
+					fmt.Printf("Error running Grype for image %s: %v\n", container.Image, err)
+					continue
+				}
+
+				// Insert the results into the database
+				if container.StartTime == "" || container.Image == "" || container.Container == "" || grypeOutput == "" || syftOutput == "" {
+					fmt.Println("Error: Database insert has missing fields.")
+				} else {
+					_, err = db.Exec("INSERT INTO deployments (image_name, deployment_date, scan_date, component_name, syft_output, grype_output) VALUES ($1, $2, $3, $4, $5, $6)",
+						container.Image, container.StartTime, time.Now().UTC().Format("2006-01-02T15:04:05Z"), container.Container, syftOutput, grypeOutput)
+					if err != nil {
+						fmt.Printf("Error inserting into the database for image %s: %v\n", container.Image, err)
+					}
+				}
+			}
+		}
+
+	case "single":
+		utils.DebugPrint("Selected message type: Single")
 
 		imageTag := imageName
 
 		// Run syft
-		syftOutput, err := runSyft(config.Syft, imageTag)
+		syftOutput, err := vulntron_syft.RunSyft(config.Vulntron, imageTag)
 		if err != nil {
 			fmt.Println("Error running Syft:", err)
 			os.Exit(1)
 		}
 
 		// Run grype
-		grypeOutput, err := runGrype(config.Grype, imageTag)
+		grypeOutput, err := vulntron_grype.RunGrype(config.Grype, config.Vulntron, imageTag)
 		if err != nil {
 			fmt.Println("Error running Grype:", err)
 			os.Exit(1)
 		}
-		// Check if timestamp, image name, and component are provided
+
+		// Insert the results into the database
 		if timestamp == "" || imageName == "" || component == "" {
 			fmt.Println("Error: --timestamp, --imagename, and --component are required for database insert.")
 		} else {
-			// Insert into the database
-			_, err = db.Exec("INSERT INTO deployments (image_name, deployment_date, component_name, syft_output, grype_output) VALUES ($1, $2, $3, $4, $5)",
-				imageName, timestamp, component, syftOutput, grypeOutput)
+			_, err = db.Exec("INSERT INTO deployments (image_name, deployment_date, scan_date, component_name, syft_output, grype_output) VALUES ($1, $2, $3, $4, $5, $6)",
+				imageName, timestamp, time.Now().UTC().Format("2006-01-02T15:04:05Z"), component, syftOutput, grypeOutput)
 			if err != nil {
 				fmt.Println("Error inserting into the database:", err)
 				os.Exit(1)
