@@ -29,11 +29,19 @@ type VulntronConfig struct {
 	SaveJson bool `yaml:"save_json"`
 }
 
+type DefectDojoConfig struct {
+	Url      string `yaml:"url"`
+	UserName string `yaml:"username"`
+	Password string `yaml:"password"`
+	Token    string `yaml:"token"`
+}
+
 type Config struct {
-	Syft     SyftConfig     `yaml:"syft"`
-	Grype    GrypeConfig    `yaml:"grype"`
-	Loader   LoaderConfig   `yaml:"loader"`
-	Vulntron VulntronConfig `yaml:"vulntron"`
+	Syft       SyftConfig       `yaml:"syft"`
+	Grype      GrypeConfig      `yaml:"grype"`
+	Loader     LoaderConfig     `yaml:"loader"`
+	Vulntron   VulntronConfig   `yaml:"vulntron"`
+	DefectDojo DefectDojoConfig `yaml:"defect_dojo"`
 }
 
 func ReadConfig(filename string) (Config, error) {
