@@ -1,0 +1,25 @@
+vulntron:
+  save_json: true
+
+# syft configuration
+syft:
+  db_root_dir: "/tmp/vuln/"
+  validate_by_hash_on_get: false
+
+# grype configuration
+grype:
+  db_root_dir: "/tmp/vuln/"
+  listing_url: "https://toolbox-data.anchore.io/grype/databases/listing.json"
+  validate_by_hash_on_get: false
+
+loader:
+  serverURL: "https://api.crc-eph.r9lp.p1.openshiftapps.com:6443"
+  namespace: "ephemeral-jngktw"
+  token: ""
+
+defect_dojo:
+  url: "http://localhost:8080"
+  username: "admin"
+  password: "Password1."
+  token: ""
+  
