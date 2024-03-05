@@ -167,7 +167,7 @@ func main() {
 	case "auto":
 		utils.DebugPrint("Selected message type: Auto")
 
-		var json_file_input bool = true
+		var json_file_input bool = false
 		var pods []v1.Pod
 
 		if json_file_input {
@@ -216,7 +216,7 @@ func main() {
 
 		// Iterate through each pod and populate the PodInfo structure
 		for _, pod := range pods {
-			if pod.Name != "ahoj" { //}== "env-ephemeral-jngktw-mbop-6cbd9c97c6-5zgjf" {
+			if pod.Name != "ahoj" { // "env-ephemeral-jngktw-mbop-6cbd9c97c6-5zgjf" {
 				var containerInfos []ContainerInfo
 
 				for _, container := range pod.Spec.Containers {
@@ -338,21 +338,37 @@ func main() {
 			}
 
 			var engagement_found bool = false
+			var engagementId int = 0
 			for _, pt := range *engs.Results {
 				var engagement_tags []string
 				engagement_tags = append(engagement_tags, *pt.Tags...)
 				if compareLists(engagement_tags, original_tags) {
 					engagement_found = true
 					break
+				} else {
+					engagementId = *pt.Id
 				}
 			}
 
 			if engagement_found {
 				utils.DebugPrint("Tags are the same, skipping new engagements for pod: %s", pod.Pod_Name)
-				break
+				//break
+
+			} else if engagementId == 0 && productCreated {
+				utils.DebugPrint("There are no tags - Possible no access to image!")
 
 			} else {
-				utils.DebugPrint("Tags are not the same or there are no tags")
+				//TODO No access creates new engagement - check message?
+				utils.DebugPrint("Tags are not the same")
+				utils.DebugPrint("Old engagement has tag %d", engagementId)
+
+				if engagementId != 0 {
+					err = vulntron_dd.DeleteEngagement(&ctx, client, engagementId)
+					if err != nil {
+						fmt.Printf("Error Deleting old engagement %v\n", err)
+						os.Exit(1)
+					}
+				}
 
 				err = vulntron_dd.CreateEngagement(&ctx, client, original_tags, ProductIdInt)
 				if err != nil {
@@ -360,33 +376,32 @@ func main() {
 					os.Exit(1)
 				}
 
-			}
+				for _, container := range pod.Containers {
+					utils.DebugPrint("Starting scanning process for: %s", container.Image)
 
-			for _, container := range pod.Containers {
-				utils.DebugPrint("Starting scanning process for: %s", container.Image)
+					// Run Grype
+					_, fileName, err := vulntron_grype.RunGrype(config.Grype, config.Vulntron, container.Image)
+					if err != nil {
+						fmt.Printf("Error running Grype for image %s: %v\n", container.Image, err)
+						continue
+					}
 
-				// Run Grype
-				_, fileName, err := vulntron_grype.RunGrype(config.Grype, config.Vulntron, container.Image)
-				if err != nil {
-					fmt.Printf("Error running Grype for image %s: %v\n", container.Image, err)
-					continue
+					// TODO - automate or create MR into Defectdojo
+					// https://github.com/DefectDojo/django-DefectDojo/issues/9618
+					cmd := exec.Command("python", "severity_fixer.py", fileName)
+					_, err = cmd.CombinedOutput()
+					if err != nil {
+						fmt.Println("Error in fixing file:", err)
+						return
+					}
+
+					err = vulntron_dd.ImportGrypeScan(&ctx, client, config.Loader.Namespace, container.Container_Name, container.ImageID, pod.Pod_Name, fileName)
+					if err != nil {
+						fmt.Printf("Error importing Grype scan %s: %v\n", container.Container_Name, err)
+						continue
+					}
+
 				}
-
-				// TODO - automate or create MR into Defectdojo
-				// https://github.com/DefectDojo/django-DefectDojo/issues/9618
-				cmd := exec.Command("python", "severity_fixer.py", fileName)
-				_, err = cmd.CombinedOutput()
-				if err != nil {
-					fmt.Println("Error in fixing file:", err)
-					return
-				}
-
-				err = vulntron_dd.ImportGrypeScan(&ctx, client, config.Loader.Namespace, container.Container_Name, container.ImageID, pod.Pod_Name, fileName)
-				if err != nil {
-					fmt.Printf("Error importing Grype scan %s: %v\n", container.Container_Name, err)
-					continue
-				}
-
 			}
 
 			//break
@@ -537,5 +552,7 @@ func main() {
 		fmt.Println("Invalid message type. Please use either 'kafka' or 'auto'.")
 		os.Exit(1)
 	}
+
+	// add clean up for created files
 
 }

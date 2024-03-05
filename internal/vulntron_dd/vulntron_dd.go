@@ -31,7 +31,7 @@ func TokenInit(username string, password string, token string, url string, ctx *
 			Password: &password,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("error: Error Creating API token")
+			return nil, fmt.Errorf("error: Error Creating API token %s", err)
 		}
 		//TODO response handling
 
@@ -145,7 +145,7 @@ func CreateProduct(ctx *context.Context, client *dd.ClientWithResponses, podName
 		if err != nil {
 			return false, 0, fmt.Errorf(err.Error())
 		}
-		utils.DebugPrint("New Product Created with id: %d and name: %s", ProductResponse.Id, ProductResponse.Name)
+		utils.DebugPrint("New Product Created with id: %d and name: %s", *ProductResponse.Id, ProductResponse.Name)
 
 		return true, *ProductResponse.Id, nil
 
@@ -248,6 +248,22 @@ func CreateEngagement(
 		utils.DebugPrint("Engagement Created")
 		return nil
 	}
+}
+
+func DeleteEngagement(ctx *context.Context, client *dd.ClientWithResponses, engagementId int) error {
+
+	EngDeleteApiResp, err := client.EngagementsDestroyWithResponse(*ctx, engagementId)
+	if err != nil {
+		return fmt.Errorf(err.Error())
+	}
+
+	if EngDeleteApiResp.StatusCode() != 204 {
+		return fmt.Errorf("error: Engagement Not deleted: %s", string(EngDeleteApiResp.Body))
+	} else {
+		utils.DebugPrint("Engagement %d deleted", engagementId)
+		return nil
+	}
+
 }
 
 func ImportGrypeScan(
