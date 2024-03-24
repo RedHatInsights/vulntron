@@ -20,9 +20,9 @@ type GrypeConfig struct {
 }
 
 type LoaderConfig struct {
-	ServerURL string `yaml:"serverURL"`
-	Namespace string `yaml:"namespace"`
-	Token     string `yaml:"token"`
+	ServerURL  string   `yaml:"serverURL"`
+	Namespaces []string `yaml:"namespaces"`
+	Token      string   `yaml:"token"`
 }
 
 type VulntronConfig struct {
@@ -33,7 +33,6 @@ type DefectDojoConfig struct {
 	Url      string `yaml:"url"`
 	UserName string `yaml:"username"`
 	Password string `yaml:"password"`
-	Token    string `yaml:"token"`
 }
 
 type Config struct {

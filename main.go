@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -149,12 +148,13 @@ func main() {
 
 	ctx := context.Background()
 
-	var ProductTypeId int
-
 	// token := os.Getenv("DOJO_APIKEY")
 	// token := "2db228fe58cace5f75cd53cb7b8c91304e9a4291"
+	dd_url := os.Getenv("DEFECT_DOJO_URL")
+	dd_username := os.Getenv("DEFECT_DOJO_USERNAME")
+	dd_password := os.Getenv("DEFECT_DOJO_PASSWORD")
 
-	client, err := vulntron_dd.TokenInit(config.DefectDojo.UserName, config.DefectDojo.Password, config.DefectDojo.Token, config.DefectDojo.Url, &ctx)
+	client, err := vulntron_dd.TokenInit(dd_username, dd_password, dd_url, &ctx)
 	if err != nil {
 		fmt.Println("Error getting client:", err)
 		os.Exit(1)
@@ -167,12 +167,13 @@ func main() {
 	case "auto":
 		utils.DebugPrint("Selected message type: Auto")
 
-		var json_file_input bool = false
+		var json_file_input bool = true
 		var pods []v1.Pod
+		var allPodInfos []PodInfo
 
 		if json_file_input {
 			// Read the JSON file
-			jsonFile, err := os.ReadFile("/home/michal/Documents/Personal/School/DIP/vulntron/ee_comp.json")
+			jsonFile, err := os.ReadFile("/app/ee_comp.json")
 			if err != nil {
 				fmt.Printf("Error reading JSON file: %v\n", err)
 				os.Exit(1)
@@ -187,12 +188,48 @@ func main() {
 
 			pods = podList.Items
 
+			// Iterate through each pod and populate the PodInfo structure
+			for _, pod := range pods {
+				if pod.Name != "ahoj" { // "env-ephemeral-jngktw-mbop-6cbd9c97c6-5zgjf" {
+					var containerInfos []ContainerInfo
+
+					for _, container := range pod.Spec.Containers {
+
+						var containerID string
+						for _, containerStatus := range pod.Status.ContainerStatuses {
+							if containerStatus.Image == container.Image {
+								containerID = containerStatus.ImageID
+							}
+
+						}
+						parts := strings.SplitN(containerID, "@", -1)
+						containerID = parts[len(parts)-1]
+
+						containerInfo := ContainerInfo{
+							Container_Name: container.Name,
+							Image:          container.Image,
+							ImageID:        containerID,
+							StartTime:      pod.Status.StartTime.Time.Format("2006-01-02T15:04:05Z"),
+						}
+						containerInfos = append(containerInfos, containerInfo)
+					}
+
+					podInfo := PodInfo{
+						Pod_Name:   pod.Name,
+						Namespace:  pod.Namespace,
+						Containers: containerInfos,
+					}
+					allPodInfos = append(allPodInfos, podInfo)
+				}
+			}
+
 		} else {
 
 			// Create a rest.Config object
+			oc_token := os.Getenv("OC_TOKEN")
 			oc_config := &rest.Config{
 				Host:        config.Loader.ServerURL,
-				BearerToken: config.Loader.Token,
+				BearerToken: oc_token,
 			}
 
 			// Create a Kubernetes clientset using the rest.Config
@@ -201,52 +238,59 @@ func main() {
 				fmt.Printf("Error creating Kubernetes client: %v\n", err)
 				os.Exit(1)
 			}
-			// Example: List Pods in the specified namespace
-			podList, err := clientset.CoreV1().Pods(config.Loader.Namespace).List(context.TODO(), metav1.ListOptions{})
-			if err != nil {
-				fmt.Printf("Error listing pods: %v\n", err)
-				os.Exit(1)
-			}
-			pods = podList.Items
 
-		}
+			// Iterate over each namespace
+			for _, namespace := range config.Loader.Namespaces {
+				utils.DebugPrint(namespace)
+				// Example: List Pods in the specified namespace
+				podList, err := clientset.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{})
+				if err != nil {
+					fmt.Printf("Error listing pods in namespace %s: %v\n", namespace, err)
+					continue // Continue to the next namespace in case of error
+				}
+				pods := podList.Items
 
-		// Create a slice to hold the PodInfo objects
-		var podInfos []PodInfo
+				var podInfos []PodInfo
 
-		// Iterate through each pod and populate the PodInfo structure
-		for _, pod := range pods {
-			if pod.Name != "ahoj" { // "env-ephemeral-jngktw-mbop-6cbd9c97c6-5zgjf" {
-				var containerInfos []ContainerInfo
+				// Iterate through each pod and populate the PodInfo structure
+				for _, pod := range pods {
+					if pod.Name != "ahoj" { // "env-ephemeral-jngktw-mbop-6cbd9c97c6-5zgjf" {
+						var containerInfos []ContainerInfo
 
-				for _, container := range pod.Spec.Containers {
+						for _, container := range pod.Spec.Containers {
 
-					var containerID string
-					for _, containerStatus := range pod.Status.ContainerStatuses {
-						if containerStatus.Image == container.Image {
-							containerID = containerStatus.ImageID
+							var containerID string
+							for _, containerStatus := range pod.Status.ContainerStatuses {
+								if containerStatus.Image == container.Image {
+									containerID = containerStatus.ImageID
+								}
+
+							}
+							parts := strings.SplitN(containerID, "@", -1)
+							containerID = parts[len(parts)-1]
+
+							containerInfo := ContainerInfo{
+								Container_Name: container.Name,
+								Image:          container.Image,
+								ImageID:        containerID,
+								StartTime:      pod.Status.StartTime.Time.Format("2006-01-02T15:04:05Z"),
+							}
+							containerInfos = append(containerInfos, containerInfo)
 						}
 
+						podInfo := PodInfo{
+							Pod_Name:   pod.Name,
+							Namespace:  pod.Namespace,
+							Containers: containerInfos,
+						}
+						podInfos = append(podInfos, podInfo)
 					}
-					parts := strings.SplitN(containerID, "@", -1)
-					containerID = parts[len(parts)-1]
-
-					containerInfo := ContainerInfo{
-						Container_Name: container.Name,
-						Image:          container.Image,
-						ImageID:        containerID,
-						StartTime:      pod.Status.StartTime.Time.Format("2006-01-02T15:04:05Z"),
-					}
-					containerInfos = append(containerInfos, containerInfo)
 				}
 
-				podInfo := PodInfo{
-					Pod_Name:   pod.Name,
-					Namespace:  pod.Namespace,
-					Containers: containerInfos,
-				}
-				podInfos = append(podInfos, podInfo)
+				// Append PodInfos for current namespace to allPodInfos
+				allPodInfos = append(allPodInfos, podInfos...)
 			}
+
 		}
 
 		/*
@@ -265,14 +309,17 @@ func main() {
 			os.Exit(8)
 		*/
 
-		// Check if all namespaces are the same as the one specified in config
-		expectedNamespace := config.Loader.Namespace
-		for _, podInfo := range podInfos {
-			if podInfo.Namespace != expectedNamespace {
-				fmt.Printf("Error: Namespace mismatch in pod %s. Expected: %s, Actual: %s\n", podInfo.Pod_Name, expectedNamespace, podInfo.Namespace)
-				os.Exit(1)
+		/*
+			// TODO: update this check
+			// Check if all namespaces are the same as the one specified in config
+			expectedNamespace := config.Loader.Namespaces[0]
+			for _, podInfo := range podInfos {
+				if podInfo.Namespace != expectedNamespace {
+					fmt.Printf("Error: Namespace mismatch in pod %s. Expected: %s, Actual: %s\n", podInfo.Pod_Name, expectedNamespace, podInfo.Namespace)
+					os.Exit(1)
+				}
 			}
-		}
+		*/
 
 		// List all Products(namespaces) in current DD deployment
 		productTypes, err := vulntron_dd.ListProductTypes(&ctx, client)
@@ -281,30 +328,42 @@ func main() {
 			os.Exit(1)
 		}
 
-		found := false
+		namespaceProductTypeIds := make(map[string]int)
+
+		existingProductTypeNames := make(map[string]bool)
 		for _, pt := range *productTypes.Results {
-			if pt.Name == config.Loader.Namespace {
-				found = true
-				ProductTypeId = *pt.Id
-				break
-			}
+			existingProductTypeNames[pt.Name] = true
 		}
 
-		// create new Product Type (namespace name) if doesn't exist already
-		if !found {
-
-			ProductTypeId, err = vulntron_dd.CreateProductType(&ctx, client, config.Loader.Namespace)
-			if err != nil {
-				fmt.Printf("Error getting product types: %v\n", err)
-				os.Exit(1)
+		// Iterate over namespaces and create product types if they don't exist
+		for _, namespace := range config.Loader.Namespaces {
+			var productTypeId int
+			if _, found := existingProductTypeNames[namespace]; !found {
+				// Create new Product Type (namespace name) if it doesn't exist already
+				productTypeId, err = vulntron_dd.CreateProductType(&ctx, client, namespace)
+				if err != nil {
+					fmt.Printf("Error creating product type for namespace %s: %v\n", namespace, err)
+					os.Exit(1)
+				}
+				// Optionally, update existingProductTypeNames map with the new product type name
+				existingProductTypeNames[namespace] = true
+			} else {
+				// If product type exists, retrieve its ID
+				for _, pt := range *productTypes.Results {
+					if pt.Name == namespace {
+						productTypeId = *pt.Id
+						break
+					}
+				}
 			}
-
+			namespaceProductTypeIds[namespace] = productTypeId
 		}
 
 		var ProductIdInt int
 
 		// create new tag for current scan and engagement
-		for _, pod := range podInfos {
+		for _, pod := range allPodInfos {
+			ProductTypeId := namespaceProductTypeIds[pod.Namespace]
 
 			// create new Product (container name) if it doesn't exist already
 			productCreated, productId, err := vulntron_dd.CreateProduct(&ctx, client, pod.Pod_Name, ProductTypeId)
@@ -327,8 +386,13 @@ func main() {
 
 			// Get list of Image hashes from source
 			var original_tags []string
+			uniqueTags := make(map[string]bool)
+
 			for _, container := range pod.Containers {
-				original_tags = append(original_tags, container.ImageID)
+				if !uniqueTags[container.ImageID] {
+					original_tags = append(original_tags, container.ImageID)
+					uniqueTags[container.ImageID] = true
+				}
 			}
 
 			engs, err := vulntron_dd.ListEngagements(&ctx, client, ProductIdInt)
@@ -354,13 +418,18 @@ func main() {
 				utils.DebugPrint("Tags are the same, skipping new engagements for pod: %s", pod.Pod_Name)
 				//break
 
-			} else if engagementId == 0 && productCreated {
+			} else if engagementId == 0 && !productCreated {
 				utils.DebugPrint("There are no tags - Possible no access to image!")
 
 			} else {
-				//TODO No access creates new engagement - check message?
-				utils.DebugPrint("Tags are not the same")
-				utils.DebugPrint("Old engagement has tag %d", engagementId)
+
+				if productCreated {
+					utils.DebugPrint("No tags yet")
+				} else {
+					//TODO No access creates new engagement - check message?
+					utils.DebugPrint("Tags are not the same")
+					utils.DebugPrint("Old engagement has tag %d", engagementId)
+				}
 
 				if engagementId != 0 {
 					err = vulntron_dd.DeleteEngagement(&ctx, client, engagementId)
@@ -388,14 +457,15 @@ func main() {
 
 					// TODO - automate or create MR into Defectdojo
 					// https://github.com/DefectDojo/django-DefectDojo/issues/9618
-					cmd := exec.Command("python", "severity_fixer.py", fileName)
-					_, err = cmd.CombinedOutput()
-					if err != nil {
-						fmt.Println("Error in fixing file:", err)
-						return
-					}
+					/*
+						cmd := exec.Command("python", "severity_fixer.py", fileName)
+						_, err = cmd.CombinedOutput()
+						if err != nil {
+							fmt.Println("Error in fixing file:", err)
+							return
+						}*/
 
-					err = vulntron_dd.ImportGrypeScan(&ctx, client, config.Loader.Namespace, container.Container_Name, container.ImageID, pod.Pod_Name, fileName)
+					err = vulntron_dd.ImportGrypeScan(&ctx, client, pod.Namespace, container.Container_Name, container.ImageID, pod.Pod_Name, fileName)
 					if err != nil {
 						fmt.Printf("Error importing Grype scan %s: %v\n", container.Container_Name, err)
 						continue
@@ -404,14 +474,12 @@ func main() {
 				}
 			}
 
-			//break
-
 		}
 
 		os.Exit(7)
 
 		// Loop through each pod and run Syft and Grype for each container's image
-		for _, pod := range podInfos {
+		for _, pod := range allPodInfos {
 			for _, container := range pod.Containers {
 
 				fmt.Println(container.Image)

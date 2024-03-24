@@ -16,11 +16,11 @@ import (
 	dd "github.com/doximity/defect-dojo-client-go"
 )
 
-func TokenInit(username string, password string, token string, url string, ctx *context.Context) (*dd.ClientWithResponses, error) {
+func TokenInit(username string, password string, url string, ctx *context.Context) (*dd.ClientWithResponses, error) {
 
 	var authToken dd.AuthToken
 
-	if token == "" && username != "" && password != "" {
+	if username != "" && password != "" {
 		tokenclient, err := dd.NewClientWithResponses(url)
 		if err != nil {
 			return nil, fmt.Errorf("error: Error instantiating the client")
