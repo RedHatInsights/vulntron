@@ -2,21 +2,17 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/RedHatInsights/Vulntron/internal/config"
 	"github.com/RedHatInsights/Vulntron/internal/utils"
 	"github.com/RedHatInsights/Vulntron/internal/vulntron_dd"
 	"github.com/RedHatInsights/Vulntron/internal/vulntron_grype"
-	"github.com/RedHatInsights/Vulntron/internal/vulntron_syft"
-	dd "github.com/doximity/defect-dojo-client-go"
 
 	kafka "github.com/Shopify/sarama"
 	_ "github.com/lib/pq"
@@ -44,32 +40,6 @@ type ContainerInfo struct {
 	Image          string `json:"Image"`
 	ImageID        string `json:"ImageID"`
 	StartTime      string `json:"StartTime"`
-}
-
-func compareLists(list1, list2 []string) bool {
-	// Create maps to store the counts of occurrences for each list
-	countMap1 := make(map[string]int)
-	countMap2 := make(map[string]int)
-
-	// Populate count maps for list1
-	for _, item := range list1 {
-		countMap1[item]++
-	}
-
-	// Populate count maps for list2
-	for _, item := range list2 {
-		countMap2[item]++
-	}
-
-	// Check if the counts match for each item
-	for item, count := range countMap1 {
-		if countMap2[item] != count {
-			return false
-		}
-	}
-
-	// Check if both lists contain the same unique elements
-	return len(countMap1) == len(countMap2)
 }
 
 // ConsumerGroupHandler represents a Sarama consumer group consumer
@@ -106,27 +76,20 @@ func (ConsumerGroupHandler) ConsumeClaim(session kafka.ConsumerGroupSession, cla
 }
 
 var (
-	runType   string
-	cfgFile   string
-	timestamp string
-	imageName string
-	component string
-	db        *sql.DB
+	runType string
+	cfgFile string
 )
 
 func init() {
 	// Command-line flags
-	flag.StringVar(&cfgFile, "config", "config.yaml", "Config file")
-	flag.StringVar(&runType, "type", "auto", "Message type: kafka or auto or single")
-	flag.StringVar(&timestamp, "timestamp", "", "Timestamp")
-	flag.StringVar(&imageName, "imagename", "", "Image name")
-	flag.StringVar(&component, "component", "", "Component name")
+	flag.StringVar(&cfgFile, "config", "config.yaml", "Config file location")
+	flag.StringVar(&runType, "type", "auto", "Message type: kafka or auto")
 }
 
 func main() {
 	flag.Parse()
 
-	// TODO: check DD config, set deduplicaion, etc.
+	// TODO: check DD settings config, set deduplicaion, etc.
 
 	// Read configuration from file
 	config, err := config.ReadConfig(cfgFile)
@@ -135,21 +98,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Connect to the PostgreSQL database
-	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable", host, port, user, password, dbname)
-	fmt.Println("PSQL config: ", psqlInfo)
-
-	db, err = sql.Open("postgres", psqlInfo)
-	if err != nil {
-		fmt.Println("Error connecting to the database:", err)
-		return
-	}
-	defer db.Close()
-
 	ctx := context.Background()
 
-	// token := os.Getenv("DOJO_APIKEY")
-	// token := "2db228fe58cace5f75cd53cb7b8c91304e9a4291"
 	dd_url := os.Getenv("DEFECT_DOJO_URL")
 	dd_username := os.Getenv("DEFECT_DOJO_USERNAME")
 	dd_password := os.Getenv("DEFECT_DOJO_PASSWORD")
@@ -294,22 +244,6 @@ func main() {
 		}
 
 		/*
-			// Convert podInfos to JSON
-			podsJSON, err := json.MarshalIndent(podInfos, "", "  ")
-			if err != nil {
-				fmt.Printf("Error marshaling podInfos to JSON: %v\n", err)
-				os.Exit(1)
-			}
-
-			res, err := utils.PrettyString(string(podsJSON))
-			if err != nil {
-				fmt.Println(err)
-			}
-			fmt.Println(res)
-			os.Exit(8)
-		*/
-
-		/*
 			// TODO: update this check
 			// Check if all namespaces are the same as the one specified in config
 			expectedNamespace := config.Loader.Namespaces[0]
@@ -406,7 +340,7 @@ func main() {
 			for _, pt := range *engs.Results {
 				var engagement_tags []string
 				engagement_tags = append(engagement_tags, *pt.Tags...)
-				if compareLists(engagement_tags, original_tags) {
+				if utils.CompareLists(engagement_tags, original_tags) {
 					engagement_found = true
 					break
 				} else {
@@ -455,129 +389,15 @@ func main() {
 						continue
 					}
 
-					// TODO - automate or create MR into Defectdojo
-					// https://github.com/DefectDojo/django-DefectDojo/issues/9618
-					/*
-						cmd := exec.Command("python", "severity_fixer.py", fileName)
-						_, err = cmd.CombinedOutput()
-						if err != nil {
-							fmt.Println("Error in fixing file:", err)
-							return
-						}*/
-
 					err = vulntron_dd.ImportGrypeScan(&ctx, client, pod.Namespace, container.Container_Name, container.ImageID, pod.Pod_Name, fileName)
 					if err != nil {
 						fmt.Printf("Error importing Grype scan %s: %v\n", container.Container_Name, err)
 						continue
 					}
-
-				}
-			}
-
-		}
-
-		os.Exit(7)
-
-		// Loop through each pod and run Syft and Grype for each container's image
-		for _, pod := range allPodInfos {
-			for _, container := range pod.Containers {
-
-				fmt.Println(container.Image)
-				// Run Syft
-
-				syftOutput, err := vulntron_syft.RunSyft(config.Vulntron, container.Image)
-				if err != nil {
-					fmt.Printf("Error running Syft for image %s: %v\n", container.Image, err)
-					continue
-				}
-
-				// Run Grype
-				grypeOutput, _, err := vulntron_grype.RunGrype(config.Grype, config.Vulntron, container.Image)
-				if err != nil {
-					fmt.Printf("Error running Grype for image %s: %v\n", container.Image, err)
-					continue
-				}
-
-				// Insert the results into the database
-				if container.StartTime == "" || container.Image == "" || container.Container_Name == "" || grypeOutput == "" || syftOutput == "" {
-					fmt.Println("Error: Database insert has missing fields.")
-				} else {
-					_, err = db.Exec("INSERT INTO deployments (image_name, deployment_date, scan_date, component_name, syft_output, grype_output) VALUES ($1, $2, $3, $4, $5, $6)",
-						container.Image, container.StartTime, time.Now().UTC().Format("2006-01-02T15:04:05Z"), container.Container_Name, syftOutput, grypeOutput)
-					if err != nil {
-						fmt.Printf("Error inserting into the database for image %s: %v\n", container.Image, err)
-					}
 				}
 			}
 		}
 
-	case "single":
-		utils.DebugPrint("Selected message type: Single")
-
-		imageTag := imageName
-
-		/* 		apiResp, err := client.ProductsCreateWithResponse(ctx, dd.ProductsCreateJSONRequestBody{
-			Name:        "My Product",
-			Description: "A description",
-			ProdType:    1,
-		}) */
-
-		var api_testing = false
-		if api_testing {
-			apiResp, err := client.ConfigurationPermissionsListWithResponse(ctx, &dd.ConfigurationPermissionsListParams{})
-			if err != nil {
-				fmt.Println("Error testing API:", err)
-				os.Exit(1)
-			}
-
-			if apiResp.StatusCode() == 200 {
-				config_perm := apiResp.Body
-				fmt.Println(string(config_perm))
-			}
-		}
-
-		apiRespProductType, err := client.ProductTypesListWithResponse(ctx, &dd.ProductTypesListParams{})
-		if err != nil {
-			fmt.Println("Error testing API:", err)
-			os.Exit(1)
-		}
-
-		if apiRespProductType.StatusCode() == 200 {
-			product_type := apiRespProductType.Body
-			res, err := utils.PrettyString(string(product_type))
-			if err != nil {
-				fmt.Println(err)
-			}
-			fmt.Println(res)
-		}
-
-		// Run grype
-		grypeOutput, _, err := vulntron_grype.RunGrype(config.Grype, config.Vulntron, imageTag)
-		if err != nil {
-			fmt.Println("Error running Grype:", err)
-			os.Exit(1)
-		}
-
-		os.Exit(1)
-
-		// Run syft
-		syftOutput, err := vulntron_syft.RunSyft(config.Vulntron, imageTag)
-		if err != nil {
-			fmt.Println("Error running Syft:", err)
-			os.Exit(1)
-		}
-
-		// Insert the results into the database
-		if timestamp == "" || imageName == "" || component == "" {
-			fmt.Println("Error: --timestamp, --imagename, and --component are required for database insert.")
-		} else {
-			_, err = db.Exec("INSERT INTO deployments (image_name, deployment_date, scan_date, component_name, syft_output, grype_output) VALUES ($1, $2, $3, $4, $5, $6)",
-				imageName, timestamp, time.Now().UTC().Format("2006-01-02T15:04:05Z"), component, syftOutput, grypeOutput)
-			if err != nil {
-				fmt.Println("Error inserting into the database:", err)
-				os.Exit(1)
-			}
-		}
 	case "kafka":
 		fmt.Println("Selected message type: Kafka")
 		config := kafka.NewConfig()
