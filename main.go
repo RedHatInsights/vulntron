@@ -126,7 +126,7 @@ func init() {
 func main() {
 	flag.Parse()
 
-	// TODO check DD config, set deduplicaion, etc.
+	// TODO: check DD config, set deduplicaion, etc.
 
 	// Read configuration from file
 	config, err := config.ReadConfig(cfgFile)
@@ -156,8 +156,8 @@ func main() {
 
 	client, err := vulntron_dd.TokenInit(dd_username, dd_password, dd_url, &ctx)
 	if err != nil {
-		fmt.Println("Error getting client:", err)
-		os.Exit(1)
+		fmt.Printf("Error initializing DefectDojo client: %v\n", err)
+		os.Exit(2)
 	}
 
 	// Check the value of the -type flag
@@ -167,7 +167,7 @@ func main() {
 	case "auto":
 		utils.DebugPrint("Selected message type: Auto")
 
-		var json_file_input bool = true
+		var json_file_input bool = false
 		var pods []v1.Pod
 		var allPodInfos []PodInfo
 
