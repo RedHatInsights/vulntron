@@ -89,8 +89,6 @@ func init() {
 func main() {
 	flag.Parse()
 
-	// TODO: check DD settings config, set deduplicaion, etc.
-
 	// Read configuration from file
 	config, err := config.ReadConfig(cfgFile)
 	if err != nil {
@@ -98,17 +96,27 @@ func main() {
 		os.Exit(1)
 	}
 
+	// OS variables initialization
+	ddUrl := os.Getenv("DEFECT_DOJO_URL")
+	ddUsername := os.Getenv("DEFECT_DOJO_USERNAME")
+	ddPassword := os.Getenv("DEFECT_DOJO_PASSWORD")
+	ocToken := os.Getenv("OC_TOKEN")
+
+	namespacesString := os.Getenv("OC_NAMESPACE_LIST")
+	namespaceStrings := strings.Split(namespacesString, ",")
+	var ocNamespaces []string
+	ocNamespaces = append(ocNamespaces, namespaceStrings...)
+
 	ctx := context.Background()
 
-	dd_url := os.Getenv("DEFECT_DOJO_URL")
-	dd_username := os.Getenv("DEFECT_DOJO_USERNAME")
-	dd_password := os.Getenv("DEFECT_DOJO_PASSWORD")
-
-	client, err := vulntron_dd.TokenInit(dd_username, dd_password, dd_url, &ctx)
+	// Create API client for Defect Dojo
+	client, err := vulntron_dd.TokenInit(ddUsername, ddPassword, ddUrl, &ctx)
 	if err != nil {
 		fmt.Printf("Error initializing DefectDojo client: %v\n", err)
 		os.Exit(2)
 	}
+
+	// TODO: check DD settings config, set deduplicaion, etc.
 
 	// Check the value of the -type flag
 	switch runType {
@@ -176,21 +184,20 @@ func main() {
 		} else {
 
 			// Create a rest.Config object
-			oc_token := os.Getenv("OC_TOKEN")
-			oc_config := &rest.Config{
+			ocConfig := &rest.Config{
 				Host:        config.Loader.ServerURL,
-				BearerToken: oc_token,
+				BearerToken: ocToken,
 			}
 
 			// Create a Kubernetes clientset using the rest.Config
-			clientset, err := kubernetes.NewForConfig(oc_config)
+			clientset, err := kubernetes.NewForConfig(ocConfig)
 			if err != nil {
 				fmt.Printf("Error creating Kubernetes client: %v\n", err)
 				os.Exit(1)
 			}
 
 			// Iterate over each namespace
-			for _, namespace := range config.Loader.Namespaces {
+			for _, namespace := range ocNamespaces {
 				utils.DebugPrint(namespace)
 				// Example: List Pods in the specified namespace
 				podList, err := clientset.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{})
@@ -246,7 +253,7 @@ func main() {
 		/*
 			// TODO: update this check
 			// Check if all namespaces are the same as the one specified in config
-			expectedNamespace := config.Loader.Namespaces[0]
+			expectedNamespace := ocNamespaces[0]
 			for _, podInfo := range podInfos {
 				if podInfo.Namespace != expectedNamespace {
 					fmt.Printf("Error: Namespace mismatch in pod %s. Expected: %s, Actual: %s\n", podInfo.Pod_Name, expectedNamespace, podInfo.Namespace)
@@ -254,6 +261,35 @@ func main() {
 				}
 			}
 		*/
+
+		// Check system settings
+		systemSettings, err := vulntron_dd.ListSystemSettings(&ctx, client)
+		if err != nil {
+			fmt.Printf("Error getting system settings: %v\n", err)
+			os.Exit(1)
+		}
+		for _, pt := range *systemSettings.Results {
+			if pt.MaxDupes == nil ||
+				*pt.EnableDeduplication != config.DefectDojo.EnableDeduplication ||
+				*pt.DeleteDuplicates != config.DefectDojo.DeleteDuplicates ||
+				*pt.MaxDupes != config.DefectDojo.MaxDuplicates {
+				// Set updated system settings
+				utils.DebugPrint("Defect Dojo System settings are not correct!")
+				err = vulntron_dd.UpdateSystemSettings(
+					&ctx,
+					client,
+					*pt.Id,
+					config.DefectDojo.EnableDeduplication,
+					config.DefectDojo.DeleteDuplicates,
+					config.DefectDojo.MaxDuplicates)
+				if err != nil {
+					fmt.Printf("Error setting system settings: %v\n", err)
+					os.Exit(1)
+				}
+			} else {
+				utils.DebugPrint("Defect Dojo System settings match config.")
+			}
+		}
 
 		// List all Products(namespaces) in current DD deployment
 		productTypes, err := vulntron_dd.ListProductTypes(&ctx, client)
@@ -270,7 +306,7 @@ func main() {
 		}
 
 		// Iterate over namespaces and create product types if they don't exist
-		for _, namespace := range config.Loader.Namespaces {
+		for _, namespace := range ocNamespaces {
 			var productTypeId int
 			if _, found := existingProductTypeNames[namespace]; !found {
 				// Create new Product Type (namespace name) if it doesn't exist already

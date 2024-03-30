@@ -20,6 +20,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -o main .
 FROM alpine
 # Copy our static executable.
 COPY --from=builder /app /app
+USER root
 # Run the vulntron binary.
 #ENTRYPOINT ["/go/bin/hello"]
 CMD ["/app/main", "--type", "auto", "--config", "/app/config.yaml"]

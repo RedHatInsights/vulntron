@@ -14,17 +14,19 @@ spec:
     spec:
       containers:
       - name: vulntron
-        image: quay.io/rhn_support_mfindra/vulntron:1.6
+        image: quay.io/rhn_support_mfindra/vulntron:1.7
         ports:
         - containerPort: 8088
         env:
         - name: DEFECT_DOJO_URL
-          value: "http://localhost:8080"
+          value: "http://defectdojo-vulntron.apps.crc-eph.r9lp.p1.openshiftapps.com"
         - name: DEFECT_DOJO_USERNAME
           value: "admin"
         - name: DEFECT_DOJO_PASSWORD
-          value: "Password1."
+          value: ""
         - name: DEFECT_DOJO_TOKEN
           value: ""
         - name: OC_TOKEN
           value: ""
+        - name: OC_NAMESPACE_LIST
+          value: "ephemeral-4svsur"

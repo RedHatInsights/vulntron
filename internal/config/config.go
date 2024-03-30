@@ -30,9 +30,12 @@ type VulntronConfig struct {
 }
 
 type DefectDojoConfig struct {
-	Url      string `yaml:"url"`
-	UserName string `yaml:"username"`
-	Password string `yaml:"password"`
+	Url                 string `yaml:"url"`
+	UserName            string `yaml:"username"`
+	Password            string `yaml:"password"`
+	EnableDeduplication bool   `yaml:"enable_deduplication"`
+	DeleteDuplicates    bool   `yaml:"delete_duplicates"`
+	MaxDuplicates       int    `yaml:"max_duplicates"`
 }
 
 type Config struct {

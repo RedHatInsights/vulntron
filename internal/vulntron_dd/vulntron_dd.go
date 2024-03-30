@@ -337,3 +337,46 @@ func ImportGrypeScan(
 
 	return nil
 }
+
+func ListSystemSettings(ctx *context.Context, client *dd.ClientWithResponses) (*dd.PaginatedSystemSettingsList, error) {
+	var systemSettings dd.PaginatedSystemSettingsList
+
+	// Get system settings
+	apiResp, err := client.SystemSettingsListWithResponse(*ctx, &dd.SystemSettingsListParams{})
+	if err != nil {
+		return nil, fmt.Errorf("error getting system settings: %v", err)
+	}
+
+	// Check the response status code
+	if apiResp.StatusCode() != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", apiResp.StatusCode())
+	}
+
+	// Decode the response body
+	err = json.Unmarshal(apiResp.Body, &systemSettings)
+	if err != nil {
+		return nil, fmt.Errorf("error decoding JSON response: %w", err)
+	}
+
+	return &systemSettings, nil
+}
+
+func UpdateSystemSettings(ctx *context.Context, client *dd.ClientWithResponses, id int, enableDeduplication bool, deleteDuplicates bool, maxDuplicates int) error {
+	// Update system settings
+	apiResp, err := client.SystemSettingsUpdateWithResponse(*ctx, id, dd.SystemSettingsUpdateJSONRequestBody{
+		EnableDeduplication: &enableDeduplication,
+		DeleteDuplicates:    &deleteDuplicates,
+		MaxDupes:            &maxDuplicates,
+	})
+	if err != nil {
+		return fmt.Errorf("error updating system settings: %v", err)
+	}
+
+	// Check the response status code
+	if apiResp.StatusCode() != http.StatusOK {
+		return fmt.Errorf("unexpected status code: %d", apiResp.StatusCode())
+	}
+	utils.DebugPrint("System settings for profile %d updated.", id)
+
+	return nil
+}
