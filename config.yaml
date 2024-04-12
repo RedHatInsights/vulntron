@@ -1,14 +1,20 @@
 vulntron:
   save_json: true
+  run_type: "auto"
+  logging: 
+    stdout: true
+    log_file: true
+    log_file_location: "/tmp/vulntron/log/"
+    log_file_name: ""
 
 # syft configuration
 syft:
-  db_root_dir: "/tmp/vuln/"
+  db_root_dir: "/tmp/vulntron/"
   validate_by_hash_on_get: false
 
 # grype configuration
 grype:
-  db_root_dir: "/tmp/vuln/"
+  db_root_dir: "/tmp/vulntron/"
   listing_url: "https://toolbox-data.anchore.io/grype/databases/listing.json"
   validate_by_hash_on_get: false
 

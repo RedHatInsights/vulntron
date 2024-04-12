@@ -16,15 +16,15 @@ import (
 	"github.com/anchore/syft/syft/source"
 )
 
-func RunSyft(config config.VulntronConfig, message string) (string, error) {
-	utils.DebugPrint("Running syft for message: %s", message)
+func RunSyft(config config.VulntronConfig, message string, log_config config.VulntronConfig) (string, error) {
+	utils.DebugPrint(log_config, "Running syft for message: %s", message)
 	imageTag := string(message)
 
 	scope, err := source.Detect(imageTag, source.DefaultDetectConfig())
 	if err != nil {
 		return "", fmt.Errorf("failed to detect source: %w", err)
 	}
-	utils.DebugPrint("Detected source: %s", scope)
+	utils.DebugPrint(log_config, "Detected source: %s", scope)
 
 	src, err := scope.NewSource(source.DefaultDetectionSourceConfig())
 	if err != nil {
@@ -68,7 +68,7 @@ func RunSyft(config config.VulntronConfig, message string) (string, error) {
 		return "", fmt.Errorf("failed to marshal JSON: %w", err)
 	}
 
-	if config.SaveJson {
+	if config.SaveJSON {
 		fileName := utils.GenerateFileName(imageTag, "syft")
 		file, err := os.Create(fileName)
 		if err != nil {
@@ -80,7 +80,7 @@ func RunSyft(config config.VulntronConfig, message string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("failed to write JSON to file: %w", err)
 		}
-		utils.DebugPrint("JSON syft data has been written to %s", fileName)
+		utils.DebugPrint(log_config, "JSON syft data has been written to %s", fileName)
 	}
 
 	stereoscope.Cleanup()

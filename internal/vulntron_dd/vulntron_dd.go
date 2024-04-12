@@ -12,12 +12,13 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/RedHatInsights/Vulntron/internal/config"
 	"github.com/RedHatInsights/Vulntron/internal/utils"
 	"github.com/deepmap/oapi-codegen/pkg/securityprovider"
 	dd "github.com/doximity/defect-dojo-client-go"
 )
 
-func TokenInit(username string, password string, url string, ctx *context.Context) (*dd.ClientWithResponses, error) {
+func TokenInit(username string, password string, url string, ctx *context.Context, log_config config.VulntronConfig) (*dd.ClientWithResponses, error) {
 
 	var authToken dd.AuthToken
 
@@ -69,7 +70,7 @@ func TokenInit(username string, password string, url string, ctx *context.Contex
 	return client, nil
 }
 
-func ListProductTypes(ctx *context.Context, client *dd.ClientWithResponses) (*dd.PaginatedProductTypeList, error) {
+func ListProductTypes(ctx *context.Context, client *dd.ClientWithResponses, log_config config.VulntronConfig) (*dd.PaginatedProductTypeList, error) {
 	// List product types
 	apiRespProductType, err := client.ProductTypesListWithResponse(*ctx, &dd.ProductTypesListParams{})
 	if err != nil {
@@ -90,7 +91,7 @@ func ListProductTypes(ctx *context.Context, client *dd.ClientWithResponses) (*dd
 	return &ProductTypes, nil
 }
 
-func CreateProductType(ctx *context.Context, client *dd.ClientWithResponses, nameSpace string) (int, error) {
+func CreateProductType(ctx *context.Context, client *dd.ClientWithResponses, nameSpace string, log_config config.VulntronConfig) (int, error) {
 
 	// Variable to store the response body
 	var productTypeResp dd.ProductType
@@ -112,7 +113,7 @@ func CreateProductType(ctx *context.Context, client *dd.ClientWithResponses, nam
 		return 0, fmt.Errorf("error: Product Type not created. Status code: %d", apiResp.StatusCode())
 	}
 
-	utils.DebugPrint("Product Type Created:", string(apiResp.Body))
+	utils.DebugPrint(log_config, "Product Type Created:", string(apiResp.Body))
 
 	// Decode the response body into productTypeResp struct
 	err = json.Unmarshal(apiResp.Body, &productTypeResp)
@@ -123,7 +124,7 @@ func CreateProductType(ctx *context.Context, client *dd.ClientWithResponses, nam
 	return *productTypeResp.Id, nil
 }
 
-func CreateProduct(ctx *context.Context, client *dd.ClientWithResponses, podName string, productTypeID int) (bool, int, error) {
+func CreateProduct(ctx *context.Context, client *dd.ClientWithResponses, podName string, productTypeID int, log_config config.VulntronConfig) (bool, int, error) {
 	var productResponse dd.Product
 
 	// Create a new product with the provided name, description, and product type ID
@@ -139,7 +140,7 @@ func CreateProduct(ctx *context.Context, client *dd.ClientWithResponses, podName
 	// Check if the product already exists
 	switch apiResp.StatusCode() {
 	case http.StatusBadRequest:
-		utils.DebugPrint("Product: %s already exists, skipping!", podName)
+		utils.DebugPrint(log_config, "Product: %s already exists, skipping!", podName)
 		return false, 0, nil
 
 	// Check if the product was successfully created
@@ -147,7 +148,7 @@ func CreateProduct(ctx *context.Context, client *dd.ClientWithResponses, podName
 		if err := json.Unmarshal(apiResp.Body, &productResponse); err != nil {
 			return false, 0, fmt.Errorf("failed to decode product response: %w", err)
 		}
-		utils.DebugPrint("New Product Created with id: %d and name: %s", *productResponse.Id, productResponse.Name)
+		utils.DebugPrint(log_config, "New Product Created with id: %d and name: %s", *productResponse.Id, productResponse.Name)
 		return true, *productResponse.Id, nil
 
 	// Handle other unexpected status codes
@@ -157,7 +158,7 @@ func CreateProduct(ctx *context.Context, client *dd.ClientWithResponses, podName
 	}
 }
 
-func ListProducts(ctx *context.Context, client *dd.ClientWithResponses, productName string) (int, error) {
+func ListProducts(ctx *context.Context, client *dd.ClientWithResponses, productName string, log_config config.VulntronConfig) (int, error) {
 	var products dd.PaginatedProductList
 
 	// List products
@@ -180,7 +181,7 @@ func ListProducts(ctx *context.Context, client *dd.ClientWithResponses, productN
 		switch count := *products.Count; count {
 		case 1:
 			product := (*products.Results)[0]
-			utils.DebugPrint("Product %s has id %d", productName, *product.Id)
+			utils.DebugPrint(log_config, "Product %s has id %d", productName, *product.Id)
 			return *product.Id, nil
 		case 0:
 			return 0, fmt.Errorf("no products returned")
@@ -194,7 +195,7 @@ func ListProducts(ctx *context.Context, client *dd.ClientWithResponses, productN
 	}
 }
 
-func ListEngagements(ctx *context.Context, client *dd.ClientWithResponses, productId int) (*dd.PaginatedEngagementList, error) {
+func ListEngagements(ctx *context.Context, client *dd.ClientWithResponses, productId int, log_config config.VulntronConfig) (*dd.PaginatedEngagementList, error) {
 	var engagements dd.PaginatedEngagementList
 
 	// List engagements
@@ -207,7 +208,7 @@ func ListEngagements(ctx *context.Context, client *dd.ClientWithResponses, produ
 
 	// Check the response status code
 	if resp.StatusCode() != http.StatusOK {
-		utils.DebugPrint("Error in fetching engagements:", string(resp.Body))
+		utils.DebugPrint(log_config, "Error in fetching engagements:", string(resp.Body))
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode())
 	}
 
@@ -220,7 +221,7 @@ func ListEngagements(ctx *context.Context, client *dd.ClientWithResponses, produ
 	return &engagements, nil
 }
 
-func CreateEngagement(ctx *context.Context, client *dd.ClientWithResponses, containers []string, productId int) error {
+func CreateEngagement(ctx *context.Context, client *dd.ClientWithResponses, containers []string, productId int, log_config config.VulntronConfig) error {
 	// Prepare the request body
 	requestBody := &bytes.Buffer{}
 	multipartWriter := multipart.NewWriter(requestBody)
@@ -247,11 +248,11 @@ func CreateEngagement(ctx *context.Context, client *dd.ClientWithResponses, cont
 		return fmt.Errorf("error: engagement not created. Status code: %d, Response: %s", response.StatusCode(), string(response.Body))
 	}
 
-	utils.DebugPrint("Engagement Created")
+	utils.DebugPrint(log_config, "Engagement Created")
 	return nil
 }
 
-func DeleteEngagement(ctx *context.Context, client *dd.ClientWithResponses, engagementID int) error {
+func DeleteEngagement(ctx *context.Context, client *dd.ClientWithResponses, engagementID int, log_config config.VulntronConfig) error {
 	// Delete engagement
 	resp, err := client.EngagementsDestroyWithResponse(*ctx, engagementID)
 	if err != nil {
@@ -263,14 +264,14 @@ func DeleteEngagement(ctx *context.Context, client *dd.ClientWithResponses, enga
 		return fmt.Errorf("engagement not deleted: %s", string(resp.Body))
 	}
 
-	utils.DebugPrint("Engagement %d deleted", engagementID)
+	utils.DebugPrint(log_config, "Engagement %d deleted", engagementID)
 	return nil
 }
 
 func ImportGrypeScan(
 	ctx *context.Context,
 	client *dd.ClientWithResponses,
-	namespace, containerName, imageID, podName, fileName string,
+	namespace, containerName, imageID, podName, fileName string, log_config config.VulntronConfig,
 ) error {
 	// Prepare request body
 	body := &bytes.Buffer{}
@@ -330,7 +331,7 @@ func ImportGrypeScan(
 	// Check the response status code
 	switch apiResp.StatusCode() {
 	case http.StatusCreated:
-		utils.DebugPrint("Scan Imported!")
+		utils.DebugPrint(log_config, "Scan Imported!")
 	default:
 		return fmt.Errorf("error in importing scan: %s", string(apiResp.Body))
 	}
@@ -338,7 +339,7 @@ func ImportGrypeScan(
 	return nil
 }
 
-func ListSystemSettings(ctx *context.Context, client *dd.ClientWithResponses) (*dd.PaginatedSystemSettingsList, error) {
+func ListSystemSettings(ctx *context.Context, client *dd.ClientWithResponses, log_config config.VulntronConfig) (*dd.PaginatedSystemSettingsList, error) {
 	var systemSettings dd.PaginatedSystemSettingsList
 
 	// Get system settings
@@ -361,7 +362,7 @@ func ListSystemSettings(ctx *context.Context, client *dd.ClientWithResponses) (*
 	return &systemSettings, nil
 }
 
-func UpdateSystemSettings(ctx *context.Context, client *dd.ClientWithResponses, id int, enableDeduplication bool, deleteDuplicates bool, maxDuplicates int) error {
+func UpdateSystemSettings(ctx *context.Context, client *dd.ClientWithResponses, id int, enableDeduplication bool, deleteDuplicates bool, maxDuplicates int, log_config config.VulntronConfig) error {
 	// Update system settings
 	apiResp, err := client.SystemSettingsUpdateWithResponse(*ctx, id, dd.SystemSettingsUpdateJSONRequestBody{
 		EnableDeduplication: &enableDeduplication,
@@ -376,7 +377,7 @@ func UpdateSystemSettings(ctx *context.Context, client *dd.ClientWithResponses, 
 	if apiResp.StatusCode() != http.StatusOK {
 		return fmt.Errorf("unexpected status code: %d", apiResp.StatusCode())
 	}
-	utils.DebugPrint("System settings for profile %d updated.", id)
+	utils.DebugPrint(log_config, "System settings for profile %d updated.", id)
 
 	return nil
 }

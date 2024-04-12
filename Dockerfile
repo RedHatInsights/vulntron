@@ -23,4 +23,5 @@ COPY --from=builder /app /app
 USER root
 # Run the vulntron binary.
 #ENTRYPOINT ["/go/bin/hello"]
-CMD ["/app/main", "--type", "auto", "--config", "/app/config.yaml"]
+#CMD ["/app/main", "--type", "auto", "--config", "/app/config.yaml"]
+CMD /app/main --type auto --config /app/config.yaml && watch -n 120 /app/main --type auto --config /app/config.yaml

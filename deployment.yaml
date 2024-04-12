@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: vulntron
-        image: quay.io/rhn_support_mfindra/vulntron:1.7
+        image: quay.io/rhn_support_mfindra/vulntron:1.8
         ports:
         - containerPort: 8088
         env:
@@ -27,6 +27,12 @@ spec:
         - name: DEFECT_DOJO_TOKEN
           value: ""
         - name: OC_TOKEN
-          value: ""
+          valueFrom:
+            secretKeyRef:
+              key: token
+              name: vulntronbot-token-rs7cx
+              optional: false
         - name: OC_NAMESPACE_LIST
           value: "ephemeral-4svsur"
+      serviceAccount: vulntronbot
+        

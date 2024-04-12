@@ -2,12 +2,12 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/RedHatInsights/Vulntron/internal/config"
 	"github.com/RedHatInsights/Vulntron/internal/utils"
@@ -16,18 +16,9 @@ import (
 
 	kafka "github.com/Shopify/sarama"
 	_ "github.com/lib/pq"
-	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-)
-
-const (
-	host     = "localhost"
-	port     = 5432
-	user     = "user"
-	password = "password"
-	dbname   = "vulntrondb"
 )
 
 type PodInfo struct {
@@ -76,14 +67,19 @@ func (ConsumerGroupHandler) ConsumeClaim(session kafka.ConsumerGroupSession, cla
 }
 
 var (
-	runType string
-	cfgFile string
+	runType     string
+	cfgFile     string
+	logFileName string
 )
 
 func init() {
 	// Command-line flags
 	flag.StringVar(&cfgFile, "config", "config.yaml", "Config file location")
 	flag.StringVar(&runType, "type", "auto", "Message type: kafka or auto")
+
+	timeStamp := time.Now().Format("2006-01-02_15-04-05")
+	logFileName = fmt.Sprintf("Grype_eng_%s.log", timeStamp)
+
 }
 
 func main() {
@@ -95,6 +91,9 @@ func main() {
 		fmt.Printf("Error reading config file: %v\n", err)
 		os.Exit(1)
 	}
+	config.Vulntron.Logging.LogFileName = logFileName
+
+	log_config := config.Vulntron
 
 	// OS variables initialization
 	ddUrl := os.Getenv("DEFECT_DOJO_URL")
@@ -110,7 +109,7 @@ func main() {
 	ctx := context.Background()
 
 	// Create API client for Defect Dojo
-	client, err := vulntron_dd.TokenInit(ddUsername, ddPassword, ddUrl, &ctx)
+	client, err := vulntron_dd.TokenInit(ddUsername, ddPassword, ddUrl, &ctx, log_config)
 	if err != nil {
 		fmt.Printf("Error initializing DefectDojo client: %v\n", err)
 		os.Exit(2)
@@ -123,28 +122,35 @@ func main() {
 
 	// TODO move to config
 	case "auto":
-		utils.DebugPrint("Selected message type: Auto")
+		utils.DebugPrint(log_config, "Selected message type: Auto")
 
-		var json_file_input bool = false
-		var pods []v1.Pod
 		var allPodInfos []PodInfo
 
-		if json_file_input {
-			// Read the JSON file
-			jsonFile, err := os.ReadFile("/app/ee_comp.json")
+		// Create a rest.Config object
+		ocConfig := &rest.Config{
+			Host:        config.Loader.ServerURL,
+			BearerToken: ocToken,
+		}
+
+		// Create a Kubernetes clientset using the rest.Config
+		clientset, err := kubernetes.NewForConfig(ocConfig)
+		if err != nil {
+			fmt.Printf("Error creating Kubernetes client: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Iterate over each namespace
+		for _, namespace := range ocNamespaces {
+			utils.DebugPrint(log_config, namespace)
+			// Example: List Pods in the specified namespace
+			podList, err := clientset.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{})
 			if err != nil {
-				fmt.Printf("Error reading JSON file: %v\n", err)
-				os.Exit(1)
+				fmt.Printf("Error listing pods in namespace %s: %v\n", namespace, err)
+				continue // Continue to the next namespace in case of error
 			}
+			pods := podList.Items
 
-			// Unmarshal JSON into PodList
-			var podList v1.PodList
-			if err := json.Unmarshal(jsonFile, &podList); err != nil {
-				fmt.Printf("Error unmarshalling JSON: %v\n", err)
-				os.Exit(1)
-			}
-
-			pods = podList.Items
+			var podInfos []PodInfo
 
 			// Iterate through each pod and populate the PodInfo structure
 			for _, pod := range pods {
@@ -177,77 +183,12 @@ func main() {
 						Namespace:  pod.Namespace,
 						Containers: containerInfos,
 					}
-					allPodInfos = append(allPodInfos, podInfo)
+					podInfos = append(podInfos, podInfo)
 				}
 			}
 
-		} else {
-
-			// Create a rest.Config object
-			ocConfig := &rest.Config{
-				Host:        config.Loader.ServerURL,
-				BearerToken: ocToken,
-			}
-
-			// Create a Kubernetes clientset using the rest.Config
-			clientset, err := kubernetes.NewForConfig(ocConfig)
-			if err != nil {
-				fmt.Printf("Error creating Kubernetes client: %v\n", err)
-				os.Exit(1)
-			}
-
-			// Iterate over each namespace
-			for _, namespace := range ocNamespaces {
-				utils.DebugPrint(namespace)
-				// Example: List Pods in the specified namespace
-				podList, err := clientset.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{})
-				if err != nil {
-					fmt.Printf("Error listing pods in namespace %s: %v\n", namespace, err)
-					continue // Continue to the next namespace in case of error
-				}
-				pods := podList.Items
-
-				var podInfos []PodInfo
-
-				// Iterate through each pod and populate the PodInfo structure
-				for _, pod := range pods {
-					if pod.Name != "ahoj" { // "env-ephemeral-jngktw-mbop-6cbd9c97c6-5zgjf" {
-						var containerInfos []ContainerInfo
-
-						for _, container := range pod.Spec.Containers {
-
-							var containerID string
-							for _, containerStatus := range pod.Status.ContainerStatuses {
-								if containerStatus.Image == container.Image {
-									containerID = containerStatus.ImageID
-								}
-
-							}
-							parts := strings.SplitN(containerID, "@", -1)
-							containerID = parts[len(parts)-1]
-
-							containerInfo := ContainerInfo{
-								Container_Name: container.Name,
-								Image:          container.Image,
-								ImageID:        containerID,
-								StartTime:      pod.Status.StartTime.Time.Format("2006-01-02T15:04:05Z"),
-							}
-							containerInfos = append(containerInfos, containerInfo)
-						}
-
-						podInfo := PodInfo{
-							Pod_Name:   pod.Name,
-							Namespace:  pod.Namespace,
-							Containers: containerInfos,
-						}
-						podInfos = append(podInfos, podInfo)
-					}
-				}
-
-				// Append PodInfos for current namespace to allPodInfos
-				allPodInfos = append(allPodInfos, podInfos...)
-			}
-
+			// Append PodInfos for current namespace to allPodInfos
+			allPodInfos = append(allPodInfos, podInfos...)
 		}
 
 		/*
@@ -263,7 +204,7 @@ func main() {
 		*/
 
 		// Check system settings
-		systemSettings, err := vulntron_dd.ListSystemSettings(&ctx, client)
+		systemSettings, err := vulntron_dd.ListSystemSettings(&ctx, client, log_config)
 		if err != nil {
 			fmt.Printf("Error getting system settings: %v\n", err)
 			os.Exit(1)
@@ -274,25 +215,26 @@ func main() {
 				*pt.DeleteDuplicates != config.DefectDojo.DeleteDuplicates ||
 				*pt.MaxDupes != config.DefectDojo.MaxDuplicates {
 				// Set updated system settings
-				utils.DebugPrint("Defect Dojo System settings are not correct!")
+				utils.DebugPrint(log_config, "Defect Dojo System settings are not correct!")
 				err = vulntron_dd.UpdateSystemSettings(
 					&ctx,
 					client,
 					*pt.Id,
 					config.DefectDojo.EnableDeduplication,
 					config.DefectDojo.DeleteDuplicates,
-					config.DefectDojo.MaxDuplicates)
+					config.DefectDojo.MaxDuplicates,
+					log_config)
 				if err != nil {
 					fmt.Printf("Error setting system settings: %v\n", err)
 					os.Exit(1)
 				}
 			} else {
-				utils.DebugPrint("Defect Dojo System settings match config.")
+				utils.DebugPrint(log_config, "Defect Dojo System settings match config.")
 			}
 		}
 
 		// List all Products(namespaces) in current DD deployment
-		productTypes, err := vulntron_dd.ListProductTypes(&ctx, client)
+		productTypes, err := vulntron_dd.ListProductTypes(&ctx, client, log_config)
 		if err != nil {
 			fmt.Printf("Error getting product types: %v\n", err)
 			os.Exit(1)
@@ -310,7 +252,7 @@ func main() {
 			var productTypeId int
 			if _, found := existingProductTypeNames[namespace]; !found {
 				// Create new Product Type (namespace name) if it doesn't exist already
-				productTypeId, err = vulntron_dd.CreateProductType(&ctx, client, namespace)
+				productTypeId, err = vulntron_dd.CreateProductType(&ctx, client, namespace, log_config)
 				if err != nil {
 					fmt.Printf("Error creating product type for namespace %s: %v\n", namespace, err)
 					os.Exit(1)
@@ -336,7 +278,7 @@ func main() {
 			ProductTypeId := namespaceProductTypeIds[pod.Namespace]
 
 			// create new Product (container name) if it doesn't exist already
-			productCreated, productId, err := vulntron_dd.CreateProduct(&ctx, client, pod.Pod_Name, ProductTypeId)
+			productCreated, productId, err := vulntron_dd.CreateProduct(&ctx, client, pod.Pod_Name, ProductTypeId, log_config)
 			if err != nil {
 				fmt.Printf("Error getting product types: %v\n", err)
 				os.Exit(1)
@@ -346,7 +288,7 @@ func main() {
 				ProductIdInt = productId
 			} else {
 				// List all Products (namespaces) in current DD deployment to get Product Id
-				ProductIdInt, err = vulntron_dd.ListProducts(&ctx, client, pod.Pod_Name)
+				ProductIdInt, err = vulntron_dd.ListProducts(&ctx, client, pod.Pod_Name, log_config)
 				if err != nil {
 					fmt.Printf("Error Listing product types: %v\n", err)
 					os.Exit(1)
@@ -365,7 +307,7 @@ func main() {
 				}
 			}
 
-			engs, err := vulntron_dd.ListEngagements(&ctx, client, ProductIdInt)
+			engs, err := vulntron_dd.ListEngagements(&ctx, client, ProductIdInt, log_config)
 			if err != nil {
 				fmt.Printf("Error Listing engagments in product: %v\n", err)
 				os.Exit(1)
@@ -385,47 +327,47 @@ func main() {
 			}
 
 			if engagement_found {
-				utils.DebugPrint("Tags are the same, skipping new engagements for pod: %s", pod.Pod_Name)
+				utils.DebugPrint(log_config, "Tags are the same, skipping new engagements for pod: %s", pod.Pod_Name)
 				//break
 
 			} else if engagementId == 0 && !productCreated {
-				utils.DebugPrint("There are no tags - Possible no access to image!")
+				utils.DebugPrint(log_config, "There are no tags - Possible no access to image!")
 
 			} else {
 
 				if productCreated {
-					utils.DebugPrint("No tags yet")
+					utils.DebugPrint(log_config, "No tags yet")
 				} else {
 					//TODO No access creates new engagement - check message?
-					utils.DebugPrint("Tags are not the same")
-					utils.DebugPrint("Old engagement has tag %d", engagementId)
+					utils.DebugPrint(log_config, "Tags are not the same")
+					utils.DebugPrint(log_config, "Old engagement has tag %d", engagementId)
 				}
 
 				if engagementId != 0 {
-					err = vulntron_dd.DeleteEngagement(&ctx, client, engagementId)
+					err = vulntron_dd.DeleteEngagement(&ctx, client, engagementId, log_config)
 					if err != nil {
 						fmt.Printf("Error Deleting old engagement %v\n", err)
 						os.Exit(1)
 					}
 				}
 
-				err = vulntron_dd.CreateEngagement(&ctx, client, original_tags, ProductIdInt)
+				err = vulntron_dd.CreateEngagement(&ctx, client, original_tags, ProductIdInt, log_config)
 				if err != nil {
 					fmt.Printf("Error Creating new engagement %v\n", err)
 					os.Exit(1)
 				}
 
 				for _, container := range pod.Containers {
-					utils.DebugPrint("Starting scanning process for: %s", container.Image)
+					utils.DebugPrint(log_config, "Starting scanning process for: %s", container.Image)
 
 					// Run Grype
-					_, fileName, err := vulntron_grype.RunGrype(config.Grype, config.Vulntron, container.Image)
+					_, fileName, err := vulntron_grype.RunGrype(config.Grype, config.Vulntron, container.Image, log_config)
 					if err != nil {
 						fmt.Printf("Error running Grype for image %s: %v\n", container.Image, err)
 						continue
 					}
 
-					err = vulntron_dd.ImportGrypeScan(&ctx, client, pod.Namespace, container.Container_Name, container.ImageID, pod.Pod_Name, fileName)
+					err = vulntron_dd.ImportGrypeScan(&ctx, client, pod.Namespace, container.Container_Name, container.ImageID, pod.Pod_Name, fileName, log_config)
 					if err != nil {
 						fmt.Printf("Error importing Grype scan %s: %v\n", container.Container_Name, err)
 						continue
@@ -441,12 +383,12 @@ func main() {
 		config.Consumer.Offsets.Initial = kafka.OffsetOldest
 		brokers := []string{os.Getenv("KAFKA_BROKER")}
 		topic := []string{os.Getenv("KAFKA_TOPIC")}
-		consumergroup := "console-consumer-28827"
+		consumerGroup := os.Getenv("KAFKA_CONSUMER_GROUP")
 
-		utils.DebugPrint("Brokers: %s", brokers)
-		utils.DebugPrint("Consumer group: %s", consumergroup)
+		utils.DebugPrint(log_config, "Brokers: %s", brokers)
+		utils.DebugPrint(log_config, "Consumer group: %s", consumerGroup)
 
-		group, err := kafka.NewConsumerGroup(brokers, consumergroup, config)
+		group, err := kafka.NewConsumerGroup(brokers, consumerGroup, config)
 		if err != nil {
 			panic(err)
 		}

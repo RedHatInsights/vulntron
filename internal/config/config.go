@@ -26,7 +26,14 @@ type LoaderConfig struct {
 }
 
 type VulntronConfig struct {
-	SaveJson bool `yaml:"save_json"`
+	SaveJSON bool   `yaml:"save_json"`
+	RunType  string `yaml:"run_type"`
+	Logging  struct {
+		Stdout          bool   `yaml:"stdout"`
+		LogFile         bool   `yaml:"log_file"`
+		LogFileLocation string `yaml:"log_file_location"`
+		LogFileName     string `yaml:"log_file_name"`
+	} `yaml:"logging"`
 }
 
 type DefectDojoConfig struct {
