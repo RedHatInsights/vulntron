@@ -34,5 +34,7 @@ spec:
               optional: false
         - name: OC_NAMESPACE_LIST
           value: "ephemeral-4svsur"
+        - name: OC_NAMESPACE_REGEX
+          value: "^ephemeral-[a-zA-Z0-9]{6}$"
       serviceAccount: vulntronbot
         

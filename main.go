@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -67,7 +68,6 @@ func (ConsumerGroupHandler) ConsumeClaim(session kafka.ConsumerGroupSession, cla
 }
 
 var (
-	runType     string
 	cfgFile     string
 	logFileName string
 )
@@ -75,7 +75,6 @@ var (
 func init() {
 	// Command-line flags
 	flag.StringVar(&cfgFile, "config", "config.yaml", "Config file location")
-	flag.StringVar(&runType, "type", "auto", "Message type: kafka or auto")
 
 	timeStamp := time.Now().Format("2006-01-02_15-04-05")
 	logFileName = fmt.Sprintf("Grype_eng_%s.log", timeStamp)
@@ -102,9 +101,7 @@ func main() {
 	ocToken := os.Getenv("OC_TOKEN")
 
 	namespacesString := os.Getenv("OC_NAMESPACE_LIST")
-	namespaceStrings := strings.Split(namespacesString, ",")
-	var ocNamespaces []string
-	ocNamespaces = append(ocNamespaces, namespaceStrings...)
+	namespacesRegex := os.Getenv("OC_NAMESPACE_REGEX")
 
 	ctx := context.Background()
 
@@ -115,12 +112,11 @@ func main() {
 		os.Exit(2)
 	}
 
-	// TODO: check DD settings config, set deduplicaion, etc.
+	// TODO: check DD settings config, set deduplication, etc.
 
-	// Check the value of the -type flag
-	switch runType {
+	// Check RunType from config
+	switch config.Vulntron.RunType {
 
-	// TODO move to config
 	case "auto":
 		utils.DebugPrint(log_config, "Selected message type: Auto")
 
@@ -137,6 +133,37 @@ func main() {
 		if err != nil {
 			fmt.Printf("Error creating Kubernetes client: %v\n", err)
 			os.Exit(1)
+		}
+
+		ocNamespaces := make([]string, 0)
+		if namespacesRegex != "" {
+			// Compile the regular expression
+			regex, err := regexp.Compile(namespacesRegex)
+			if err != nil {
+				fmt.Printf("Error compiling regex: %v\n", err)
+				return
+			}
+
+			namespaceList, err := clientset.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
+			if err != nil {
+				panic(err.Error())
+			}
+
+			// Store namespaces that match the regex pattern
+			for _, namespace := range namespaceList.Items {
+				if regex.MatchString(namespace.Name) {
+					ocNamespaces = append(ocNamespaces, namespace.Name)
+				}
+			}
+		} else {
+			namespaceStrings := strings.Split(namespacesString, ",")
+
+			ocNamespaces = append(ocNamespaces, namespaceStrings...)
+		}
+
+		fmt.Println("Matching namespaces:")
+		for _, ns := range ocNamespaces {
+			fmt.Println(ns)
 		}
 
 		// Iterate over each namespace

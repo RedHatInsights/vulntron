@@ -11,7 +11,7 @@ run: fmt vet
 	go run ./main.go
 	
 runautodemo: fmt vet
-	go run ./main.go --type auto --config config.yaml
+	go run ./main.go --config config.yaml
 
 clean:
 	go clean 
