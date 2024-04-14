@@ -112,8 +112,6 @@ func main() {
 		os.Exit(2)
 	}
 
-	// TODO: check DD settings config, set deduplication, etc.
-
 	// Check RunType from config
 	switch config.Vulntron.RunType {
 
@@ -157,13 +155,7 @@ func main() {
 			}
 		} else {
 			namespaceStrings := strings.Split(namespacesString, ",")
-
 			ocNamespaces = append(ocNamespaces, namespaceStrings...)
-		}
-
-		fmt.Println("Matching namespaces:")
-		for _, ns := range ocNamespaces {
-			fmt.Println(ns)
 		}
 
 		// Iterate over each namespace
@@ -181,7 +173,7 @@ func main() {
 
 			// Iterate through each pod and populate the PodInfo structure
 			for _, pod := range pods {
-				if pod.Name != "ahoj" { // "env-ephemeral-jngktw-mbop-6cbd9c97c6-5zgjf" {
+				if namespace == "ephemeral-wycitx" { //pod.Name != "ahoj" { // "env-ephemeral-jngktw-mbop-6cbd9c97c6-5zgjf" {
 					var containerInfos []ContainerInfo
 
 					for _, container := range pod.Spec.Containers {
@@ -191,7 +183,15 @@ func main() {
 							if containerStatus.Image == container.Image {
 								containerID = containerStatus.ImageID
 							}
+						}
 
+						if containerID == "" {
+							// imageID mismatch (possible :latest) match on name (containerId preferred)
+							for _, containerStatus := range pod.Status.ContainerStatuses {
+								if containerStatus.Name == container.Name {
+									containerID = containerStatus.ImageID
+								}
+							}
 						}
 						parts := strings.SplitN(containerID, "@", -1)
 						containerID = parts[len(parts)-1]
@@ -300,8 +300,8 @@ func main() {
 
 		var ProductIdInt int
 
-		// create new tag for current scan and engagement
-		for _, pod := range allPodInfos {
+		for counter, pod := range allPodInfos {
+			utils.DebugPrint(log_config, "Checking %d out of %d pods", counter+1, len(allPodInfos))
 			ProductTypeId := namespaceProductTypeIds[pod.Namespace]
 
 			// create new Product (container name) if it doesn't exist already
@@ -334,42 +334,47 @@ func main() {
 				}
 			}
 
-			engs, err := vulntron_dd.ListEngagements(&ctx, client, ProductIdInt, log_config)
+			// Get list of all engagements for the given ProductID
+			engs, err := vulntron_dd.ListEngagements(&ctx, client, ProductIdInt, "", log_config)
 			if err != nil {
 				fmt.Printf("Error Listing engagments in product: %v\n", err)
 				os.Exit(1)
 			}
 
-			var engagement_found bool = false
+			// Check Engagements tag(s) against the tag(s) from the currently scanned pod
+			var engagementFound bool = false
 			var engagementId int = 0
 			for _, pt := range *engs.Results {
 				var engagement_tags []string
 				engagement_tags = append(engagement_tags, *pt.Tags...)
 				if utils.CompareLists(engagement_tags, original_tags) {
-					engagement_found = true
+					engagementFound = true
 					break
 				} else {
 					engagementId = *pt.Id
 				}
 			}
 
-			if engagement_found {
-				utils.DebugPrint(log_config, "Tags are the same, skipping new engagements for pod: %s", pod.Pod_Name)
-				//break
+			if engagementFound {
+				// Current tags are the same as stored tags in already completed engagement
+				utils.DebugPrint(log_config, "Engagement with the same image tag already exists, skipping new engagements for pod: %s", pod.Pod_Name)
 
 			} else if engagementId == 0 && !productCreated {
+				// No access to image
 				utils.DebugPrint(log_config, "There are no tags - Possible no access to image!")
 
 			} else {
 
 				if productCreated {
 					utils.DebugPrint(log_config, "No tags yet")
+
 				} else {
 					//TODO No access creates new engagement - check message?
 					utils.DebugPrint(log_config, "Tags are not the same")
 					utils.DebugPrint(log_config, "Old engagement has tag %d", engagementId)
 				}
 
+				// remove old Engagement for the given Product
 				if engagementId != 0 {
 					err = vulntron_dd.DeleteEngagement(&ctx, client, engagementId, log_config)
 					if err != nil {
@@ -381,7 +386,8 @@ func main() {
 				err = vulntron_dd.CreateEngagement(&ctx, client, original_tags, ProductIdInt, log_config)
 				if err != nil {
 					fmt.Printf("Error Creating new engagement %v\n", err)
-					os.Exit(1)
+					// TODO handle this gracefully
+					// os.Exit(1)
 				}
 
 				for _, container := range pod.Containers {

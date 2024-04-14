@@ -195,7 +195,7 @@ func ListProducts(ctx *context.Context, client *dd.ClientWithResponses, productN
 	}
 }
 
-func ListEngagements(ctx *context.Context, client *dd.ClientWithResponses, productId int, log_config config.VulntronConfig) (*dd.PaginatedEngagementList, error) {
+func ListEngagements(ctx *context.Context, client *dd.ClientWithResponses, productId int, engagementTag string, log_config config.VulntronConfig) (*dd.PaginatedEngagementList, error) {
 	var engagements dd.PaginatedEngagementList
 
 	// List engagements
@@ -237,6 +237,7 @@ func CreateEngagement(ctx *context.Context, client *dd.ClientWithResponses, cont
 	_ = multipartWriter.WriteField("name", "Grype_eng")
 	_ = multipartWriter.WriteField("deduplication_on_engagement", "true")
 
+	utils.DebugPrint(log_config, "Creating engagement for ProductID %d, with tags %v", productId, containers)
 	// Create the engagement
 	response, err := client.EngagementsCreateWithBodyWithResponse(*ctx, multipartWriter.FormDataContentType(), requestBody)
 	if err != nil {
@@ -276,6 +277,11 @@ func ImportGrypeScan(
 	// Prepare request body
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
+
+	// tag cannot be empty
+	if imageID == "" {
+		imageID = "unknown"
+	}
 
 	formFields := map[string]string{
 		"product_type_name":                      namespace,
