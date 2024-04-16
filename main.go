@@ -173,7 +173,7 @@ func main() {
 
 			// Iterate through each pod and populate the PodInfo structure
 			for _, pod := range pods {
-				if namespace == "ephemeral-wycitx" { //pod.Name != "ahoj" { // "env-ephemeral-jngktw-mbop-6cbd9c97c6-5zgjf" {
+				if namespace != "ah" { // "env-ephemeral-jngktw-mbop-6cbd9c97c6-5zgjf" {
 					var containerInfos []ContainerInfo
 
 					for _, container := range pod.Spec.Containers {
@@ -195,11 +195,14 @@ func main() {
 						}
 						parts := strings.SplitN(containerID, "@", -1)
 						containerID = parts[len(parts)-1]
+						if containerID == "" {
+							containerID = container.Image
+						}
 
 						containerInfo := ContainerInfo{
 							Container_Name: container.Name,
 							Image:          container.Image,
-							ImageID:        containerID,
+							ImageID:        strings.ToLower(containerID),
 							StartTime:      pod.Status.StartTime.Time.Format("2006-01-02T15:04:05Z"),
 						}
 						containerInfos = append(containerInfos, containerInfo)
@@ -301,7 +304,7 @@ func main() {
 		var ProductIdInt int
 
 		for counter, pod := range allPodInfos {
-			utils.DebugPrint(log_config, "Checking %d out of %d pods", counter+1, len(allPodInfos))
+			utils.DebugPrint(log_config, " >>>>>>>>>>>>> Checking %d out of %d pods <<<<<<<<<<<<<", counter+1, len(allPodInfos))
 			ProductTypeId := namespaceProductTypeIds[pod.Namespace]
 
 			// create new Product (container name) if it doesn't exist already
@@ -329,24 +332,26 @@ func main() {
 
 			for _, container := range pod.Containers {
 				if !uniqueTags[container.ImageID] {
-					original_tags = append(original_tags, container.ImageID)
+					original_tags = append(original_tags, strings.ToLower(container.Image))
 					uniqueTags[container.ImageID] = true
 				}
 			}
 
 			// Get list of all engagements for the given ProductID
-			engs, err := vulntron_dd.ListEngagements(&ctx, client, ProductIdInt, "", log_config)
+			engs, err := vulntron_dd.ListEngagements(&ctx, client, ProductIdInt, log_config)
 			if err != nil {
-				fmt.Printf("Error Listing engagments in product: %v\n", err)
+				fmt.Printf("Error Listing engagements using productID: %v\n", err)
 				os.Exit(1)
 			}
 
-			// Check Engagements tag(s) against the tag(s) from the currently scanned pod
+			// Check Product Engagements tag(s) against the tag(s) from the currently scanned product
 			var engagementFound bool = false
 			var engagementId int = 0
 			for _, pt := range *engs.Results {
 				var engagement_tags []string
 				engagement_tags = append(engagement_tags, *pt.Tags...)
+				utils.DebugPrint(log_config, "eng_tags from db: %v", engagement_tags)
+				utils.DebugPrint(log_config, "eng_tags current scan: %v", original_tags)
 				if utils.CompareLists(engagement_tags, original_tags) {
 					engagementFound = true
 					break
@@ -366,10 +371,9 @@ func main() {
 			} else {
 
 				if productCreated {
-					utils.DebugPrint(log_config, "No tags yet")
+					utils.DebugPrint(log_config, "No engagements inside the Product - No tags yet")
 
 				} else {
-					//TODO No access creates new engagement - check message?
 					utils.DebugPrint(log_config, "Tags are not the same")
 					utils.DebugPrint(log_config, "Old engagement has tag %d", engagementId)
 				}
@@ -383,28 +387,52 @@ func main() {
 					}
 				}
 
-				err = vulntron_dd.CreateEngagement(&ctx, client, original_tags, ProductIdInt, log_config)
+				var containerInfo string
+				for _, container := range pod.Containers {
+					containerInfo += fmt.Sprintf("%s %s\n", container.Image, container.ImageID)
+				}
+
+				err = vulntron_dd.CreateEngagement(&ctx, client, original_tags, ProductIdInt, containerInfo, log_config)
 				if err != nil {
 					fmt.Printf("Error Creating new engagement %v\n", err)
 					// TODO handle this gracefully
 					// os.Exit(1)
 				}
 
+				//utils.DebugPrint(log_config, "All image tags in current pods are already scanned in engagement(s) with ID: %v", products)
+
 				for _, container := range pod.Containers {
 					utils.DebugPrint(log_config, "Starting scanning process for: %s", container.Image)
 
-					// Run Grype
-					_, fileName, err := vulntron_grype.RunGrype(config.Grype, config.Vulntron, container.Image, log_config)
+					fmt.Printf("imageID: %v\n", container.ImageID)
+					fmt.Printf("image: %v\n", container.Image)
+
+					// Get list of all tests for the given tag
+					tests, err := vulntron_dd.ListTests(&ctx, client, container.ImageID, log_config)
 					if err != nil {
-						fmt.Printf("Error running Grype for image %s: %v\n", container.Image, err)
-						continue
+						fmt.Printf("Error Listing tests using tag: %v\n", err)
+						os.Exit(1)
 					}
 
-					err = vulntron_dd.ImportGrypeScan(&ctx, client, pod.Namespace, container.Container_Name, container.ImageID, pod.Pod_Name, fileName, log_config)
-					if err != nil {
-						fmt.Printf("Error importing Grype scan %s: %v\n", container.Container_Name, err)
-						continue
+					if *tests.Count > 0 {
+						fmt.Println("========= there is already a test with the same tag")
+
+					} else {
+
+						// Run Grype
+						_, fileName, err := vulntron_grype.RunGrype(config.Grype, config.Vulntron, container.Image, log_config)
+						if err != nil {
+							fmt.Printf("Error running Grype for image %s: %v\n", container.Image, err)
+							continue
+						}
+
+						err = vulntron_dd.ImportGrypeScan(&ctx, client, pod.Namespace, container.Container_Name, container.ImageID, pod.Pod_Name, fileName, log_config)
+						if err != nil {
+							fmt.Printf("Error importing Grype scan %s: %v\n", container.Container_Name, err)
+							continue
+						}
 					}
+
 				}
 			}
 		}

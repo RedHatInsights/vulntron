@@ -195,7 +195,7 @@ func ListProducts(ctx *context.Context, client *dd.ClientWithResponses, productN
 	}
 }
 
-func ListEngagements(ctx *context.Context, client *dd.ClientWithResponses, productId int, engagementTag string, log_config config.VulntronConfig) (*dd.PaginatedEngagementList, error) {
+func ListEngagements(ctx *context.Context, client *dd.ClientWithResponses, productId int, log_config config.VulntronConfig) (*dd.PaginatedEngagementList, error) {
 	var engagements dd.PaginatedEngagementList
 
 	// List engagements
@@ -221,7 +221,33 @@ func ListEngagements(ctx *context.Context, client *dd.ClientWithResponses, produ
 	return &engagements, nil
 }
 
-func CreateEngagement(ctx *context.Context, client *dd.ClientWithResponses, containers []string, productId int, log_config config.VulntronConfig) error {
+func ListTests(ctx *context.Context, client *dd.ClientWithResponses, imageTag string, log_config config.VulntronConfig) (*dd.PaginatedTestList, error) {
+	var tests dd.PaginatedTestList
+
+	// List tests
+	resp, err := client.TestsListWithResponse(*ctx, &dd.TestsListParams{
+		Tag: &imageTag,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list tests: %w", err)
+	}
+
+	// Check the response status code
+	if resp.StatusCode() != http.StatusOK {
+		utils.DebugPrint(log_config, "Error in fetching tests:", string(resp.Body))
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode())
+	}
+
+	// Decode the response body
+	err = json.Unmarshal(resp.Body, &tests)
+	if err != nil {
+		return nil, fmt.Errorf("error decoding JSON response: %w", err)
+	}
+
+	return &tests, nil
+}
+
+func CreateEngagement(ctx *context.Context, client *dd.ClientWithResponses, containers []string, productId int, desc string, log_config config.VulntronConfig) error {
 	// Prepare the request body
 	requestBody := &bytes.Buffer{}
 	multipartWriter := multipart.NewWriter(requestBody)
@@ -236,6 +262,7 @@ func CreateEngagement(ctx *context.Context, client *dd.ClientWithResponses, cont
 	_ = multipartWriter.WriteField("target_end", time.Now().Format("2006-01-02"))
 	_ = multipartWriter.WriteField("name", "Grype_eng")
 	_ = multipartWriter.WriteField("deduplication_on_engagement", "true")
+	_ = multipartWriter.WriteField("description", desc)
 
 	utils.DebugPrint(log_config, "Creating engagement for ProductID %d, with tags %v", productId, containers)
 	// Create the engagement
