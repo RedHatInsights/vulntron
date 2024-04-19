@@ -72,7 +72,8 @@ func TokenInit(username string, password string, url string, ctx *context.Contex
 
 func ListProductTypes(ctx *context.Context, client *dd.ClientWithResponses, log_config config.VulntronConfig) (*dd.PaginatedProductTypeList, error) {
 	// List product types
-	apiRespProductType, err := client.ProductTypesListWithResponse(*ctx, &dd.ProductTypesListParams{})
+	limit := 1000
+	apiRespProductType, err := client.ProductTypesListWithResponse(*ctx, &dd.ProductTypesListParams{Limit: &limit})
 	if err != nil {
 		return nil, fmt.Errorf("error: Listing Product Types: %w", err)
 	}
@@ -113,13 +114,13 @@ func CreateProductType(ctx *context.Context, client *dd.ClientWithResponses, nam
 		return 0, fmt.Errorf("error: Product Type not created. Status code: %d", apiResp.StatusCode())
 	}
 
-	utils.DebugPrint(log_config, "Product Type Created:", string(apiResp.Body))
-
 	// Decode the response body into productTypeResp struct
 	err = json.Unmarshal(apiResp.Body, &productTypeResp)
 	if err != nil {
 		return 0, fmt.Errorf("error: Decoding JSON: %w", err)
 	}
+
+	utils.DebugPrint(log_config, "Product Type %s Created with ID %d", productTypeResp.Name, *productTypeResp.Id)
 
 	return *productTypeResp.Id, nil
 }
