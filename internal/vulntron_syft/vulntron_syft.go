@@ -3,6 +3,7 @@ package vulntron_syft
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 
 	"github.com/RedHatInsights/Vulntron/internal/config"
@@ -16,15 +17,15 @@ import (
 	"github.com/anchore/syft/syft/source"
 )
 
-func RunSyft(config config.VulntronConfig, message string, log_config config.VulntronConfig) (string, error) {
-	utils.DebugPrint(log_config, "Running syft for message: %s", message)
+func RunSyft(config config.VulntronConfig, message string) (string, error) {
+	log.Printf("Running syft for message: %s", message)
 	imageTag := string(message)
 
 	scope, err := source.Detect(imageTag, source.DefaultDetectConfig())
 	if err != nil {
 		return "", fmt.Errorf("failed to detect source: %w", err)
 	}
-	utils.DebugPrint(log_config, "Detected source: %s", scope)
+	log.Printf("Detected source: %v", scope)
 
 	src, err := scope.NewSource(source.DefaultDetectionSourceConfig())
 	if err != nil {
@@ -80,7 +81,7 @@ func RunSyft(config config.VulntronConfig, message string, log_config config.Vul
 		if err != nil {
 			return "", fmt.Errorf("failed to write JSON to file: %w", err)
 		}
-		utils.DebugPrint(log_config, "JSON syft data has been written to %s", fileName)
+		log.Printf("JSON syft data has been written to %s", fileName)
 	}
 
 	stereoscope.Cleanup()

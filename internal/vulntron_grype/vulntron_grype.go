@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 
 	"github.com/RedHatInsights/Vulntron/internal/config"
@@ -21,7 +22,7 @@ import (
 	"github.com/anchore/syft/syft/source"
 )
 
-func RunGrype(config_g config.GrypeConfig, config_v config.VulntronConfig, message string, log_config config.VulntronConfig) (string, string, error) {
+func RunGrype(config_g config.GrypeConfig, config_v config.VulntronConfig, message string) (string, string, error) {
 	// TODO: make `loading DB` and `gathering packages` work in parallel
 	// https://github.com/anchore/grype/blob/7e8ee40996ba3a4defb5e887ab0177d99cd0e663/cmd/root.go#L240
 
@@ -36,7 +37,7 @@ func RunGrype(config_g config.GrypeConfig, config_v config.VulntronConfig, messa
 		return "", "", fmt.Errorf("failed to load vulnerability DB: %w", err)
 	}
 
-	utils.DebugPrint(log_config, "Running grype for message: %s", message)
+	log.Printf("Running grype for message: %s", message)
 	imageTag := string(message)
 
 	scope, err := source.Detect(imageTag, source.DefaultDetectConfig())
@@ -44,7 +45,7 @@ func RunGrype(config_g config.GrypeConfig, config_v config.VulntronConfig, messa
 		return "", "", fmt.Errorf("failed to detect source: %w", err)
 	}
 
-	utils.DebugPrint(log_config, "Detected source: %s", scope)
+	log.Printf("Detected source: %v", scope)
 
 	src, err := scope.NewSource(source.DefaultDetectionSourceConfig())
 	if err != nil {
@@ -144,7 +145,7 @@ func RunGrype(config_g config.GrypeConfig, config_v config.VulntronConfig, messa
 		if err != nil {
 			return "", "", fmt.Errorf("failed to write to file: %w", err)
 		}
-		utils.DebugPrint(log_config, "JSON grype data has been written to %s", fileName)
+		log.Printf("JSON grype data has been written to %s", fileName)
 	}
 
 	stereoscope.Cleanup()

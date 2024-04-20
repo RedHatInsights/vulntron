@@ -10,9 +10,9 @@ require (
 	github.com/anchore/syft v0.97.1
 	github.com/deepmap/oapi-codegen v1.16.2
 	github.com/doximity/defect-dojo-client-go v0.2.0
+	github.com/google/go-containerregistry v0.16.1
 	github.com/lib/pq v1.10.7
 	gopkg.in/yaml.v2 v2.4.0
-	k8s.io/api v0.26.2
 	k8s.io/apimachinery v0.26.2
 	k8s.io/client-go v0.26.2
 
@@ -120,7 +120,6 @@ require (
 	github.com/gomarkdown/markdown v0.0.0-20230716120725-531d2d74bc12 // indirect
 	github.com/google/gnostic v0.5.7-v3refs // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
-	github.com/google/go-containerregistry v0.16.1 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/google/licensecheck v0.3.1 // indirect
 	github.com/google/pprof v0.0.0-20221118152302-e6195bd50e26 // indirect
@@ -283,6 +282,7 @@ require (
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gorm.io/gorm v1.25.5 // indirect
+	k8s.io/api v0.26.2 // indirect
 	k8s.io/klog/v2 v2.90.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20221012153701-172d655c2280 // indirect
 	k8s.io/utils v0.0.0-20230220204549-a5ecb0141aa5 // indirect
