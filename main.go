@@ -87,7 +87,10 @@ func main() {
 
 	flag.Parse()
 
-	config := initializeConfiguration(cfgFile)
+	config, err := initializeConfiguration(cfgFile)
+	if err != nil {
+		log.Fatalf("Error reading config file: %v", err)
+	}
 
 	setupLogging(config.Vulntron)
 
@@ -96,32 +99,25 @@ func main() {
 	} else if config.Vulntron.RunType == "kafka" {
 		processKafkaMode()
 	} else {
-		fmt.Println("Invalid message type. Please use either 'kafka' or 'auto'.")
-		os.Exit(1)
+		log.Fatalf("Invalid message type. Please use either 'kafka' or 'auto'.")
 	}
 }
 
-func initializeConfiguration(filePath string) config.Config {
+func initializeConfiguration(filePath string) (config.Config, error) {
 	config, err := config.ReadConfig(filePath)
 	if err != nil {
-		fmt.Printf("Error reading config file: %v\n", err)
-		os.Exit(1)
+		return config, fmt.Errorf("error reading config file: %v", err)
 	}
 	timeStamp := time.Now().Format("2006-01-02_15-04-05")
-	logFileName := fmt.Sprintf("Grype_eng_%s.log", timeStamp)
-	config.Vulntron.Logging.LogFileName = logFileName
-	return config
+	config.Vulntron.Logging.LogFileName = fmt.Sprintf("Grype_eng_%s.log", timeStamp)
+	return config, nil
 }
 
 func initializeDefectDojoClient() (*dd.ClientWithResponses, error) {
 	ctx := context.Background()
-	ddUsername := os.Getenv("DEFECT_DOJO_USERNAME")
-	ddPassword := os.Getenv("DEFECT_DOJO_PASSWORD")
-	ddUrl := os.Getenv("DEFECT_DOJO_URL")
-
-	client, err := vulntron_dd.TokenInit(ddUsername, ddPassword, ddUrl, &ctx)
+	client, err := vulntron_dd.TokenInit(os.Getenv("DEFECT_DOJO_USERNAME"), os.Getenv("DEFECT_DOJO_PASSWORD"), os.Getenv("DEFECT_DOJO_URL"), &ctx)
 	if err != nil {
-		return nil, fmt.Errorf("error initializing DefectDojo client: %v", err)
+		log.Fatalf("Error initializing DefectDojo client: %v", err)
 	}
 	return client, nil
 }
@@ -130,8 +126,7 @@ func processAutoMode(config config.Config) {
 	ctx := context.Background()
 	client, err := initializeDefectDojoClient()
 	if err != nil {
-		fmt.Printf("Error initializing DefectDojo client: %v\n", err)
-		os.Exit(2)
+		log.Fatalf("Error initializing DefectDojo client: %v", err)
 	}
 
 	ocToken := os.Getenv("OC_TOKEN")
@@ -147,8 +142,7 @@ func processAutoMode(config config.Config) {
 	// Create a Kubernetes clientset using the rest.Config
 	clientset, err := kubernetes.NewForConfig(ocConfig)
 	if err != nil {
-		fmt.Printf("Error creating Kubernetes client: %v\n", err)
-		os.Exit(1)
+		log.Fatalf("Error creating Kubernetes client: %v", err)
 	}
 
 	ocNamespaces := processNamespaces(clientset, namespacesString, namespacesRegex)
@@ -168,14 +162,12 @@ func processNamespaces(clientset *kubernetes.Clientset, namespacesString, namesp
 	if namespacesRegex != "" {
 		regex, err := regexp.Compile(namespacesRegex)
 		if err != nil {
-			fmt.Printf("Error compiling regex: %v\n", err)
-			os.Exit(1)
+			log.Fatalf("Error compiling regex: %v", err)
 		}
 
 		namespaceList, err := clientset.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
 		if err != nil {
-			fmt.Printf("Error listing namespaces: %v\n", err)
-			os.Exit(1)
+			log.Fatalf("Error listing namespaces: %v", err)
 		}
 
 		for _, namespace := range namespaceList.Items {
@@ -195,7 +187,7 @@ func retrievePodInfo(clientset *kubernetes.Clientset, ocNamespaces []string) []P
 	for _, namespace := range ocNamespaces {
 		podList, err := clientset.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{})
 		if err != nil {
-			fmt.Printf("Error listing pods in namespace %s: %v\n", namespace, err)
+			log.Printf("Error listing pods in namespace %s: %v\n", namespace, err)
 			continue
 		}
 		pods := podList.Items
@@ -216,11 +208,11 @@ func retrievePodInfo(clientset *kubernetes.Clientset, ocNamespaces []string) []P
 				if containerImageID == "" {
 					ref, err := name.ParseReference(container.Image)
 					if err != nil {
-						fmt.Printf("Error parsing image name: %v\n", err)
+						log.Printf("Error parsing image name: %v\n", err)
 					} else {
 						desc, err := remote.Get(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 						if err != nil {
-							fmt.Printf("Error fetching image description: %v\n", err)
+							log.Printf("Error fetching image description: %v\n", err)
 						} else {
 							log.Printf("Digest of the image %s is %s", container.Image, desc.Digest)
 							containerImageID = container.Image + "@" + desc.Digest.String()
@@ -260,8 +252,7 @@ func retrievePodInfo(clientset *kubernetes.Clientset, ocNamespaces []string) []P
 func updateSystemSettings(ctx *context.Context, client *dd.ClientWithResponses, config config.Config) {
 	systemSettings, err := vulntron_dd.ListSystemSettings(ctx, client)
 	if err != nil {
-		fmt.Printf("Error getting system settings: %v\n", err)
-		os.Exit(1)
+		log.Fatalf("Error getting system settings: %v", err)
 	}
 	for _, pt := range *systemSettings.Results {
 		if pt.MaxDupes == nil ||
@@ -277,8 +268,7 @@ func updateSystemSettings(ctx *context.Context, client *dd.ClientWithResponses, 
 				config.DefectDojo.DeleteDuplicates,
 				config.DefectDojo.MaxDuplicates)
 			if err != nil {
-				fmt.Printf("Error setting system settings: %v\n", err)
-				os.Exit(1)
+				log.Fatalf("Error setting system settings: %v", err)
 			}
 		} else {
 			log.Printf("Defect Dojo System settings match config.")
@@ -289,8 +279,7 @@ func updateSystemSettings(ctx *context.Context, client *dd.ClientWithResponses, 
 func manageProductTypes(ctx *context.Context, client *dd.ClientWithResponses, ocNamespaces []string) map[string]int {
 	productTypes, err := vulntron_dd.ListProductTypes(ctx, client)
 	if err != nil {
-		fmt.Printf("Error getting product types: %v\n", err)
-		os.Exit(1)
+		log.Fatalf("Error getting product types: %v", err)
 	}
 
 	namespaceProductTypeIds := make(map[string]int)
@@ -304,14 +293,12 @@ func manageProductTypes(ctx *context.Context, client *dd.ClientWithResponses, oc
 			// Product Type does not exist, create it
 			productTypeId, err := vulntron_dd.CreateProductType(ctx, client, namespace)
 			if err != nil {
-				fmt.Printf("Error creating product type for namespace %s: %v\n", namespace, err)
-				os.Exit(1)
+				log.Fatalf("Error creating product type for namespace %s: %v", namespace, err)
 			}
 			// Update the map with the new product type ID
 			namespaceProductTypeIds[namespace] = productTypeId
 		}
 	}
-
 	return namespaceProductTypeIds
 }
 
@@ -323,14 +310,12 @@ func scanPod(ctx *context.Context, client *dd.ClientWithResponses, allPodInfos [
 		// Create or find existing Product
 		productCreated, productIdInt, err := vulntron_dd.CreateProduct(ctx, client, pod.Pod_Name, productTypeId)
 		if err != nil {
-			fmt.Printf("Error processing product types: %v\n", err)
-			os.Exit(1)
+			log.Fatalf("Error processing product types: %v", err)
 		}
 		if !productCreated {
 			productIdInt, err = vulntron_dd.ListProducts(ctx, client, pod.Pod_Name)
 			if err != nil {
-				fmt.Printf("Error listing product types: %v\n", err)
-				os.Exit(1)
+				log.Fatalf("Error listing product types: %v", err)
 			}
 		}
 
@@ -347,8 +332,7 @@ func scanPod(ctx *context.Context, client *dd.ClientWithResponses, allPodInfos [
 		// Handle engagements
 		engs, err := vulntron_dd.ListEngagements(ctx, client, productIdInt)
 		if err != nil {
-			fmt.Printf("Error listing engagements using productID: %v\n", err)
-			os.Exit(1)
+			log.Fatalf("Error listing engagements using productID: %v", err)
 		}
 
 		var engagementFound bool
@@ -363,7 +347,7 @@ func scanPod(ctx *context.Context, client *dd.ClientWithResponses, allPodInfos [
 		}
 
 		if engagementFound {
-			log.Printf("Engagement with the same image tag already exists, skipping new engagements for pod: %s", pod.Pod_Name)
+			log.Printf("Engagement with the same image tags already exists, skipping new engagements for pod: %s", pod.Pod_Name)
 		} else if engagementId == 0 && !productCreated {
 			// No access to image
 			log.Printf("There are no tags - Possible no access to image!")
@@ -380,8 +364,7 @@ func scanPod(ctx *context.Context, client *dd.ClientWithResponses, allPodInfos [
 
 			if engagementId != 0 {
 				if err := vulntron_dd.DeleteEngagement(ctx, client, engagementId); err != nil {
-					fmt.Printf("Error deleting old engagement %v\n", err)
-					os.Exit(1)
+					log.Fatalf("Error deleting old engagement %v", err)
 				}
 			}
 			var containerInfo string
@@ -398,17 +381,14 @@ func scanPod(ctx *context.Context, client *dd.ClientWithResponses, allPodInfos [
 			// Process each container for scanning
 			for _, container := range pod.Containers {
 				log.Printf("Starting scanning process for: %s", container.Image)
-				fmt.Printf("imageID: %v\n", container.ImageID)
-				fmt.Printf("image: %v\n", container.Image)
 
 				tests, err := vulntron_dd.ListTests(ctx, client, container.ImageID)
 				if err != nil {
-					fmt.Printf("Error listing tests using tag: %v\n", err)
-					os.Exit(1)
+					log.Fatalf("Error listing tests using tag: %v", err)
 				}
 
 				if *tests.Count > 0 {
-					fmt.Println("========= there is already a test with the same tag")
+					log.Printf("There already is a test %s with the same tag %s", *(*tests.Results)[0].Tags, container.ImageID)
 
 				} else {
 					// Run Grype

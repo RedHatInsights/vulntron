@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -23,15 +24,10 @@ func GenerateFileName(value, input string) string {
 		// Folder does not exist, create it
 		err := os.Mkdir(folderPath, 0755)
 		if err != nil {
-			fmt.Println("Error creating folder:", err)
-			os.Exit(1)
+			log.Fatalf("Error creating folder: %v", err)
 		}
-		//DebugPrint("Folder created successfully.")
 	} else if err != nil {
-		fmt.Println("Error checking folder existence:", err)
-		os.Exit(1)
-	} else {
-		//DebugPrint("Folder already exists.")
+		log.Fatalf("Error checking folder existence: %v", err)
 	}
 
 	currentTime := time.Now().Format("2006-01-02_15:04:05")
