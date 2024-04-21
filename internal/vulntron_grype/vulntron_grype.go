@@ -23,8 +23,6 @@ import (
 )
 
 func RunGrype(config_g config.GrypeConfig, config_v config.VulntronConfig, message string) (string, string, error) {
-	// TODO: make `loading DB` and `gathering packages` work in parallel
-	// https://github.com/anchore/grype/blob/7e8ee40996ba3a4defb5e887ab0177d99cd0e663/cmd/root.go#L240
 
 	dbConfig := grype_db.Config{
 		DBRootDir:           config_g.DBRootDir,
@@ -108,12 +106,6 @@ func RunGrype(config_g config.GrypeConfig, config_v config.VulntronConfig, messa
 	if err != nil {
 		return "", "", fmt.Errorf("failed to create document: %w", err)
 	}
-	/*
-		// Encode the scan results to JSON.
-		syftOut, err := json.Marshal(doc)
-		if err != nil {
-			return "", fmt.Errorf("failed to marshal JSON: %w", err)
-		}*/
 
 	var buf bytes.Buffer
 	jsonEncoder := json.NewEncoder(&buf)

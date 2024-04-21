@@ -1,6 +1,7 @@
 vulntron:
   save_json: true
   run_type: "auto"
+  cluster_URL: "https://api.crc-eph.r9lp.p1.openshiftapps.com:6443"
   logging: 
     stdout: true
     log_file: true
@@ -17,10 +18,7 @@ grype:
   db_root_dir: "/tmp/vulntron/"
   listing_url: "https://toolbox-data.anchore.io/grype/databases/listing.json"
   validate_by_hash_on_get: false
-
-loader:
-  serverURL: "https://api.crc-eph.r9lp.p1.openshiftapps.com:6443"
-
+  
 defect_dojo:
   url: "http://localhost:8080"
   username: "admin"

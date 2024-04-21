@@ -16,3 +16,4 @@ runautodemo: fmt vet
 clean:
 	go clean 
 	rm Vulntron
+	rm bin/vulntron

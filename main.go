@@ -80,7 +80,7 @@ func setupLogging(cfg config.VulntronConfig) {
 		log.SetOutput(os.Stdout)
 	}
 
-	log.Printf("Logging initialized")
+	log.Printf("Logging successfully initialized")
 }
 
 func main() {
@@ -135,7 +135,7 @@ func processAutoMode(config config.Config) {
 
 	// Create a rest.Config object
 	ocConfig := &rest.Config{
-		Host:        config.Loader.ServerURL,
+		Host:        config.Vulntron.ClusterURL,
 		BearerToken: ocToken,
 	}
 
@@ -336,75 +336,56 @@ func scanPod(ctx *context.Context, client *dd.ClientWithResponses, allPodInfos [
 		}
 
 		var engagementFound bool
-		var engagementId int
+		var existingEngagementId int
 		for _, pt := range *engs.Results {
 			if utils.CompareLists(*pt.Tags, original_tags) {
 				engagementFound = true
+				existingEngagementId = *pt.Id
 				break
-			} else {
-				engagementId = *pt.Id
 			}
 		}
 
-		if engagementFound {
-			log.Printf("Engagement with the same image tags already exists, skipping new engagements for pod: %s", pod.Pod_Name)
-		} else if engagementId == 0 && !productCreated {
-			// No access to image
-			log.Printf("There are no tags - Possible no access to image!")
+		// Check and run tests regardless of whether an engagement was found
+		for _, container := range pod.Containers {
+			log.Printf("Checking for existing tests for: %s", container.Image)
+			tests, err := vulntron_dd.ListTests(ctx, client, container.ImageID)
+			if err != nil {
+				log.Fatalf("Error listing tests using tag: %v", err)
+			}
 
-		} else {
+			if tests.Count != nil && *tests.Count > 0 {
+				log.Printf("Test already exists for image %s with tag %s, skipping scan", container.Image, container.ImageID)
+				continue // Skip to next container
+			}
 
-			if productCreated {
-				log.Printf("No engagements inside the Product - No tags yet")
-
+			log.Printf("No existing tests found for image %s with tag %s, initiating scan", container.Image, container.ImageID)
+			if engagementFound {
+				log.Printf("Using existing engagement with ID %d for new tests", existingEngagementId)
 			} else {
-				log.Printf("Tags are not the same")
-				log.Printf("Old engagement has tag %d", engagementId)
-			}
-
-			if engagementId != 0 {
-				if err := vulntron_dd.DeleteEngagement(ctx, client, engagementId); err != nil {
-					log.Fatalf("Error deleting old engagement %v", err)
-				}
-			}
-			var containerInfo string
-			for _, container := range pod.Containers {
-				containerInfo += fmt.Sprintf("%s %s\n", container.Image, container.ImageID)
-			}
-
-			if err := vulntron_dd.CreateEngagement(ctx, client, original_tags, productIdInt, containerInfo); err != nil {
-				fmt.Printf("Error creating new engagement %v\n", err)
-				// TODO handle this gracefully
-				// os.Exit(1)
-			}
-
-			// Process each container for scanning
-			for _, container := range pod.Containers {
-				log.Printf("Starting scanning process for: %s", container.Image)
-
-				tests, err := vulntron_dd.ListTests(ctx, client, container.ImageID)
-				if err != nil {
-					log.Fatalf("Error listing tests using tag: %v", err)
-				}
-
-				if *tests.Count > 0 {
-					log.Printf("There already is a test %s with the same tag %s", *(*tests.Results)[0].Tags, container.ImageID)
-
-				} else {
-					// Run Grype
-					_, fileName, err := vulntron_grype.RunGrype(config.Grype, config.Vulntron, container.ImageID)
-					if err != nil {
-						fmt.Printf("Error running Grype for image %s: %v\n", container.Image, err)
-						continue
+				if !productCreated {
+					var containerInfo string
+					for _, cont := range pod.Containers {
+						containerInfo += fmt.Sprintf("%s %s\n", cont.Image, cont.ImageID)
 					}
-
-					if err := vulntron_dd.ImportGrypeScan(ctx, client, pod.Namespace, container.Container_Name, container.ImageID, pod.Pod_Name, fileName); err != nil {
-						fmt.Printf("Error importing Grype scan %s: %v\n", container.Container_Name, err)
-						continue
+					if err := vulntron_dd.CreateEngagement(ctx, client, original_tags, productIdInt, containerInfo); err != nil {
+						log.Fatalf("Error creating new engagement %v", err)
 					}
+					productCreated = true // Mark as created to avoid creating multiple engagements
 				}
+			}
+
+			// Run Grype and import scan
+			_, fileName, err := vulntron_grype.RunGrype(config.Grype, config.Vulntron, container.ImageID)
+			if err != nil {
+				log.Printf("Error running Grype for image %s: %v", container.Image, err)
+				continue
+			}
+
+			if err := vulntron_dd.ImportGrypeScan(ctx, client, pod.Namespace, container.Container_Name, container.ImageID, pod.Pod_Name, fileName); err != nil {
+				log.Printf("Error importing Grype scan %s: %v", container.Container_Name, err)
 			}
 		}
+
 	}
 }
 
