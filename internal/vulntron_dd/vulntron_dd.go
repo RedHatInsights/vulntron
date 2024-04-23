@@ -146,8 +146,13 @@ func CreateProduct(ctx *context.Context, client *dd.ClientWithResponses, podName
 	// Handle the response based on the status code
 	switch apiResp.StatusCode() {
 	case http.StatusBadRequest:
-		log.Printf("Product: '%s' already exists, skipping!", podName)
-		return false, 0, nil
+		log.Printf("Product: '%s' already exists, skipping Product creation!", podName)
+		productIdInt, err := ListProducts(ctx, client, podName)
+		if err != nil {
+			log.Fatalf("Error listing products: %v", err)
+		}
+		return false, productIdInt, nil
+
 	case http.StatusCreated:
 		var productResponse dd.Product
 		if err := json.Unmarshal(apiResp.Body, &productResponse); err != nil {
@@ -158,7 +163,7 @@ func CreateProduct(ctx *context.Context, client *dd.ClientWithResponses, podName
 		return true, *productResponse.Id, nil
 	default:
 		errMsg := fmt.Sprintf("Received unexpected status code %d while creating product for pod '%s'", apiResp.StatusCode(), podName)
-		log.Printf(errMsg)
+		log.Printf("%v", errMsg)
 		return false, 0, fmt.Errorf(errMsg)
 	}
 }
@@ -255,7 +260,7 @@ func ListTests(ctx *context.Context, client *dd.ClientWithResponses, imageTag st
 	return &tests, nil
 }
 
-func CreateEngagement(ctx *context.Context, client *dd.ClientWithResponses, containers []string, productId int, desc string) error {
+func CreateEngagement(ctx *context.Context, client *dd.ClientWithResponses, containers []string, productId int, desc string, engName string) error {
 	// Prepare the request body
 	requestBody := &bytes.Buffer{}
 	multipartWriter := multipart.NewWriter(requestBody)
@@ -274,7 +279,7 @@ func CreateEngagement(ctx *context.Context, client *dd.ClientWithResponses, cont
 		"product":                     strconv.Itoa(productId),
 		"target_start":                time.Now().Format("2006-01-02"),
 		"target_end":                  time.Now().Format("2006-01-02"),
-		"name":                        "Grype_eng",
+		"name":                        engName,
 		"deduplication_on_engagement": "true",
 		"description":                 desc,
 	}
@@ -327,10 +332,10 @@ func DeleteEngagement(ctx *context.Context, client *dd.ClientWithResponses, enga
 	return nil
 }
 
-func ImportGrypeScan(
+func ImportScan(
 	ctx *context.Context,
 	client *dd.ClientWithResponses,
-	namespace, containerName, imageID, podName, fileName string,
+	namespace, containerName, imageID, podName, fileName string, scanType string, engName string,
 ) error {
 	// Initialize multipart writer to build the body for the POST request
 	body := &bytes.Buffer{}
@@ -347,7 +352,7 @@ func ImportGrypeScan(
 		"verified":                               "true",
 		"close_old_findings":                     "true",
 		"test_title":                             containerName,
-		"engagement_name":                        "Grype_eng",
+		"engagement_name":                        engName,
 		"build_id":                               "",
 		"deduplication_on_engagement":            "true",
 		"push_to_jira":                           "false",
@@ -359,7 +364,7 @@ func ImportGrypeScan(
 		"tags":                                   imageID,
 		"product_name":                           podName,
 		"auto_create_context":                    "true",
-		"scan_type":                              "Anchore Grype",
+		"scan_type":                              scanType,
 	}
 
 	for key, value := range formFields {
@@ -455,5 +460,32 @@ func UpdateSystemSettings(ctx *context.Context, client *dd.ClientWithResponses, 
 	}
 
 	log.Printf("System settings for profile %d updated successfully.", id)
+	return nil
+}
+
+func DeleteProductTypes(ctx *context.Context, client *dd.ClientWithResponses) error {
+	// List all product types to get their IDs
+	productTypes, err := ListProductTypes(ctx, client)
+	if err != nil {
+		log.Printf("Failed to list product types: %v", err)
+		return fmt.Errorf("failed to list product types: %w", err)
+	}
+
+	log.Printf("Starting deleting product types...")
+	// Iterate over the list of product types and delete each one
+	for _, productType := range *productTypes.Results {
+		resp, err := client.ProductTypesDestroyWithResponse(*ctx, *productType.Id)
+		if err != nil {
+			log.Printf("Failed to delete product type with ID %d: %v", *productType.Id, err)
+			return fmt.Errorf("failed to delete product type with ID %d: %w", *productType.Id, err)
+		}
+		if resp.StatusCode() != http.StatusNoContent {
+			log.Printf("Failed to delete product type with ID %d: received status code %d", *productType.Id, resp.StatusCode())
+			return fmt.Errorf("failed to delete product type with ID %d, received status code: %d", *productType.Id, resp.StatusCode())
+		}
+		log.Printf("Product type with ID %d deleted successfully", *productType.Id)
+	}
+
+	log.Printf("All product types deleted successfully")
 	return nil
 }

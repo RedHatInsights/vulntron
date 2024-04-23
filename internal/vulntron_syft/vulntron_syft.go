@@ -69,20 +69,18 @@ func RunSyft(config config.VulntronConfig, message string) (string, error) {
 		return "", fmt.Errorf("failed to marshal JSON: %w", err)
 	}
 
-	if config.SaveJSON {
-		fileName := utils.GenerateFileName(imageTag, "syft")
-		file, err := os.Create(fileName)
-		if err != nil {
-			return "", fmt.Errorf("failed to create or open file: %w", err)
-		}
-		defer file.Close()
-
-		_, err = file.Write(indentedJSON)
-		if err != nil {
-			return "", fmt.Errorf("failed to write JSON to file: %w", err)
-		}
-		log.Printf("JSON syft data has been written to %s", fileName)
+	fileName := utils.GenerateFileName(imageTag, "syft")
+	file, err := os.Create(fileName)
+	if err != nil {
+		return "", fmt.Errorf("failed to create or open file: %w", err)
 	}
+	defer file.Close()
+
+	_, err = file.Write(indentedJSON)
+	if err != nil {
+		return "", fmt.Errorf("failed to write JSON to file: %w", err)
+	}
+	log.Printf("JSON syft data has been written to %s", fileName)
 
 	stereoscope.Cleanup()
 

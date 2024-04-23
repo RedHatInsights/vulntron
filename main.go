@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/RedHatInsights/Vulntron/internal/config"
-	"github.com/RedHatInsights/Vulntron/internal/utils"
 	"github.com/RedHatInsights/Vulntron/internal/vulntron_dd"
 	"github.com/RedHatInsights/Vulntron/internal/vulntron_grype"
+	"github.com/RedHatInsights/Vulntron/internal/vulntron_trivy"
 
 	dd "github.com/doximity/defect-dojo-client-go"
 
@@ -43,6 +43,21 @@ type ContainerInfo struct {
 	ImageID        string `json:"ImageID"`
 }
 
+type ScanType struct {
+	Name     string
+	EngName  string
+	Function func(config.Config, string) (string, error)
+	Enabled  bool
+}
+
+type ScanFunction func(cfg config.Config, imageID string) (string, error)
+
+var scanFunctionMap = map[string]ScanFunction{
+	"RunGrype": vulntron_grype.RunGrype,
+	"RunTrivy": vulntron_trivy.RunTrivy,
+	// "RunAnotherScanner": vulntron_other.RunAnotherScanner
+}
+
 var (
 	cfgFile string
 )
@@ -50,6 +65,26 @@ var (
 func init() {
 	// Command-line flags
 	flag.StringVar(&cfgFile, "config", "config.yaml", "Config file location")
+}
+
+func main() {
+
+	flag.Parse()
+
+	config, err := loadConfiguration(cfgFile)
+	if err != nil {
+		log.Fatalf("Error reading config file: %v", err)
+	}
+
+	setupLogging(config.Vulntron)
+
+	if config.Vulntron.RunType == "auto" {
+		processAutoMode(config)
+	} else if config.Vulntron.RunType == "kafka" {
+		processKafkaMode()
+	} else {
+		log.Fatalf("Invalid message type. Please use either 'kafka' or 'auto'.")
+	}
 }
 
 // Initialize logging based on configuration
@@ -83,27 +118,7 @@ func setupLogging(cfg config.VulntronConfig) {
 	log.Printf("Logging successfully initialized")
 }
 
-func main() {
-
-	flag.Parse()
-
-	config, err := initializeConfiguration(cfgFile)
-	if err != nil {
-		log.Fatalf("Error reading config file: %v", err)
-	}
-
-	setupLogging(config.Vulntron)
-
-	if config.Vulntron.RunType == "auto" {
-		processAutoMode(config)
-	} else if config.Vulntron.RunType == "kafka" {
-		processKafkaMode()
-	} else {
-		log.Fatalf("Invalid message type. Please use either 'kafka' or 'auto'.")
-	}
-}
-
-func initializeConfiguration(filePath string) (config.Config, error) {
+func loadConfiguration(filePath string) (config.Config, error) {
 	config, err := config.ReadConfig(filePath)
 	if err != nil {
 		return config, fmt.Errorf("error reading config file: %v", err)
@@ -113,9 +128,8 @@ func initializeConfiguration(filePath string) (config.Config, error) {
 	return config, nil
 }
 
-func initializeDefectDojoClient() (*dd.ClientWithResponses, error) {
-	ctx := context.Background()
-	client, err := vulntron_dd.TokenInit(os.Getenv("DEFECT_DOJO_USERNAME"), os.Getenv("DEFECT_DOJO_PASSWORD"), os.Getenv("DEFECT_DOJO_URL"), &ctx)
+func initializeDefectDojoClient(ctx *context.Context) (*dd.ClientWithResponses, error) {
+	client, err := vulntron_dd.TokenInit(os.Getenv("DEFECT_DOJO_USERNAME"), os.Getenv("DEFECT_DOJO_PASSWORD"), os.Getenv("DEFECT_DOJO_URL"), ctx)
 	if err != nil {
 		log.Fatalf("Error initializing DefectDojo client: %v", err)
 	}
@@ -124,7 +138,7 @@ func initializeDefectDojoClient() (*dd.ClientWithResponses, error) {
 
 func processAutoMode(config config.Config) {
 	ctx := context.Background()
-	client, err := initializeDefectDojoClient()
+	client, err := initializeDefectDojoClient(&ctx)
 	if err != nil {
 		log.Fatalf("Error initializing DefectDojo client: %v", err)
 	}
@@ -147,7 +161,7 @@ func processAutoMode(config config.Config) {
 
 	ocNamespaces := processNamespaces(clientset, namespacesString, namespacesRegex)
 
-	allPodInfos := retrievePodInfo(clientset, ocNamespaces)
+	allPodInfos := parseClusterData(clientset, ocNamespaces)
 
 	updateSystemSettings(&ctx, client, config)
 
@@ -181,7 +195,7 @@ func processNamespaces(clientset *kubernetes.Clientset, namespacesString, namesp
 	return ocNamespaces
 }
 
-func retrievePodInfo(clientset *kubernetes.Clientset, ocNamespaces []string) []PodInfo {
+func parseClusterData(clientset *kubernetes.Clientset, ocNamespaces []string) []PodInfo {
 	var allPodInfos []PodInfo
 
 	for _, namespace := range ocNamespaces {
@@ -302,91 +316,127 @@ func manageProductTypes(ctx *context.Context, client *dd.ClientWithResponses, oc
 	return namespaceProductTypeIds
 }
 
+// Initializes scan types from the configuration
+func loadScanTypes(cfg config.Config) []ScanType {
+	var scanTypes []ScanType
+	for _, sc := range cfg.Scan {
+		function := getScanFunction(sc.Function)
+		if function != nil {
+			scanTypes = append(scanTypes, ScanType{
+				Name:     sc.Name,
+				EngName:  sc.EngName,
+				Function: function,
+				Enabled:  sc.Enabled,
+			})
+		}
+	}
+	return scanTypes
+}
+
+func getScanFunction(name string) ScanFunction {
+	if function, exists := scanFunctionMap[name]; exists {
+		return function
+	}
+	return nil
+}
+
 func scanPod(ctx *context.Context, client *dd.ClientWithResponses, allPodInfos []PodInfo, namespaceProductTypeIds map[string]int, config config.Config) {
+
+	// Initialize scan types from config
+	scanTypes := loadScanTypes(config)
+
 	for counter, pod := range allPodInfos {
 		log.Printf(" >>>>>>>>>>>>> Checking %d out of %d pods <<<<<<<<<<<<<", counter+1, len(allPodInfos))
+		log.Printf("Checking pod %s in namespace %s for scans", pod.Pod_Name, pod.Namespace)
 		productTypeId := namespaceProductTypeIds[pod.Namespace]
-
-		// Create or find existing Product
-		productCreated, productIdInt, err := vulntron_dd.CreateProduct(ctx, client, pod.Pod_Name, productTypeId)
+		_, productIdInt, err := vulntron_dd.CreateProduct(ctx, client, pod.Pod_Name, productTypeId)
 		if err != nil {
 			log.Fatalf("Error processing product types: %v", err)
 		}
-		if !productCreated {
-			productIdInt, err = vulntron_dd.ListProducts(ctx, client, pod.Pod_Name)
-			if err != nil {
-				log.Fatalf("Error listing product types: %v", err)
+
+		// Create or use existing engagements for each scan type
+		for _, scanType := range scanTypes {
+			if scanType.Enabled {
+				manageEngagementForScanType(ctx, client, pod, productIdInt, scanType, config)
 			}
 		}
-
-		// Collect image hashes from source
-		uniqueTags := map[string]bool{}
-		var original_tags []string
-		for _, container := range pod.Containers {
-			if !uniqueTags[container.ImageID] {
-				original_tags = append(original_tags, strings.ToLower(container.Image))
-				uniqueTags[container.ImageID] = true
-			}
-		}
-
-		// Handle engagements
-		engs, err := vulntron_dd.ListEngagements(ctx, client, productIdInt)
-		if err != nil {
-			log.Fatalf("Error listing engagements using productID: %v", err)
-		}
-
-		var engagementFound bool
-		var existingEngagementId int
-		for _, pt := range *engs.Results {
-			if utils.CompareLists(*pt.Tags, original_tags) {
-				engagementFound = true
-				existingEngagementId = *pt.Id
-				break
-			}
-		}
-
-		// Check and run tests regardless of whether an engagement was found
-		for _, container := range pod.Containers {
-			log.Printf("Checking for existing tests for: %s", container.Image)
-			tests, err := vulntron_dd.ListTests(ctx, client, container.ImageID)
-			if err != nil {
-				log.Fatalf("Error listing tests using tag: %v", err)
-			}
-
-			if tests.Count != nil && *tests.Count > 0 {
-				log.Printf("Test already exists for image %s with tag %s, skipping scan", container.Image, container.ImageID)
-				continue // Skip to next container
-			}
-
-			log.Printf("No existing tests found for image %s with tag %s, initiating scan", container.Image, container.ImageID)
-			if engagementFound {
-				log.Printf("Using existing engagement with ID %d for new tests", existingEngagementId)
-			} else {
-				if !productCreated {
-					var containerInfo string
-					for _, cont := range pod.Containers {
-						containerInfo += fmt.Sprintf("%s %s\n", cont.Image, cont.ImageID)
-					}
-					if err := vulntron_dd.CreateEngagement(ctx, client, original_tags, productIdInt, containerInfo); err != nil {
-						log.Fatalf("Error creating new engagement %v", err)
-					}
-					productCreated = true // Mark as created to avoid creating multiple engagements
-				}
-			}
-
-			// Run Grype and import scan
-			_, fileName, err := vulntron_grype.RunGrype(config.Grype, config.Vulntron, container.ImageID)
-			if err != nil {
-				log.Printf("Error running Grype for image %s: %v", container.Image, err)
-				continue
-			}
-
-			if err := vulntron_dd.ImportGrypeScan(ctx, client, pod.Namespace, container.Container_Name, container.ImageID, pod.Pod_Name, fileName); err != nil {
-				log.Printf("Error importing Grype scan %s: %v", container.Container_Name, err)
-			}
-		}
-
 	}
+}
+
+func manageEngagementForScanType(ctx *context.Context, client *dd.ClientWithResponses, pod PodInfo, productIdInt int, scanType ScanType, config config.Config) {
+	// Gather all image IDs for a collective engagement description
+	var containerInfo strings.Builder
+	var images []string
+	for _, container := range pod.Containers {
+		containerInfo.WriteString(fmt.Sprintf("%s (%s)\n", container.Image, container.ImageID))
+		images = append(images, container.Image)
+	}
+
+	// Check for existing engagement specifically for this scan type
+	engagements, err := vulntron_dd.ListEngagements(ctx, client, productIdInt)
+	if err != nil {
+		log.Fatalf("Error listing engagements: %v", err)
+	}
+
+	var engagementIdForScan int
+	for _, engagement := range *engagements.Results {
+		if *engagement.Name == scanType.EngName {
+			engagementIdForScan = *engagement.Id
+			break
+		}
+	}
+
+	if engagementIdForScan == 0 {
+		// Create a new engagement if not found
+		if err := vulntron_dd.CreateEngagement(ctx, client, images, productIdInt, containerInfo.String(), scanType.EngName); err != nil {
+			log.Fatalf("Error creating new engagement for scan type %s: %v", scanType.Name, err)
+		}
+	} else {
+		// Update the existing engagement if necessary
+		log.Printf("Using existing engagement ID %d for scan type %s", engagementIdForScan, scanType.Name)
+	}
+
+	// Handle scanning for each image within the single engagement
+	for _, container := range pod.Containers {
+		scanImage(ctx, client, container, pod, scanType, config)
+	}
+}
+
+func scanImage(ctx *context.Context, client *dd.ClientWithResponses, container ContainerInfo, pod PodInfo, scanType ScanType, config config.Config) {
+	tests, err := vulntron_dd.ListTests(ctx, client, container.ImageID)
+	if err != nil {
+		log.Fatalf("Error listing tests: %v", err)
+	}
+
+	// Check if a test already exists for this image and scan type
+	for _, test := range *tests.Results {
+		if *test.ScanType == scanType.Name && contains(*test.Tags, container.ImageID) {
+			log.Printf("Test using %s type already exists for image %s with ID %s, skipping", *test.ScanType, container.Image, container.ImageID)
+			return
+		}
+	}
+
+	// If no test exists, proceed with scanning
+	log.Printf("Running scan type %s for image %s", scanType.Name, container.Image)
+	fileName, err := scanType.Function(config, container.ImageID)
+	if err != nil {
+		log.Printf("Error running scan %s for image %s: %v", scanType.Name, container.Image, err)
+		return
+	}
+
+	if err := vulntron_dd.ImportScan(ctx, client, pod.Namespace, container.Container_Name, container.ImageID, pod.Pod_Name, fileName, scanType.Name, scanType.EngName); err != nil {
+		log.Printf("Error importing scan result for image %s: %v", container.Image, err)
+	}
+}
+
+// Utility function to check if a slice contains a specific string
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
 }
 
 // ConsumerGroupHandler represents a Sarama consumer group consumer
@@ -457,7 +507,7 @@ func consumeKafkaMessages(ctx *context.Context) {
 		handler := ConsumerGroupHandler{}
 
 		// `Consume` should be called inside an infinite loop, when a
-		// server-side rebalance happens, the consumer session will need to be
+		// server-side re-balance happens, the consumer session will need to be
 		// recreated to get the new claims
 		err := group.Consume(*ctx, topic, handler)
 		if err != nil {

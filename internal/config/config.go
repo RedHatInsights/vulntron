@@ -9,8 +9,7 @@ import (
 )
 
 type SyftConfig struct {
-	DBRootDir           string `yaml:"db_root_dir"`
-	ValidateByHashOnGet bool   `yaml:"validate_by_hash_on_get"`
+	DBRootDir string `yaml:"db_root_dir"`
 }
 
 type GrypeConfig struct {
@@ -20,7 +19,6 @@ type GrypeConfig struct {
 }
 
 type VulntronConfig struct {
-	SaveJSON   bool   `yaml:"save_json"`
 	RunType    string `yaml:"run_type"`
 	ClusterURL string `yaml:"cluster_URL"`
 	Logging    struct {
@@ -40,11 +38,19 @@ type DefectDojoConfig struct {
 	MaxDuplicates       int    `yaml:"max_duplicates"`
 }
 
+type ScanConfig struct {
+	Name     string `yaml:"name"`
+	EngName  string `yaml:"engName"`
+	Function string `yaml:"function"`
+	Enabled  bool   `yaml:"enabled"`
+}
+
 type Config struct {
 	Syft       SyftConfig       `yaml:"syft"`
 	Grype      GrypeConfig      `yaml:"grype"`
 	Vulntron   VulntronConfig   `yaml:"vulntron"`
 	DefectDojo DefectDojoConfig `yaml:"defect_dojo"`
+	Scan       []ScanConfig     `yaml:"scan_types"`
 }
 
 func ReadConfig(filename string) (Config, error) {

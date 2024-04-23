@@ -22,17 +22,17 @@ import (
 	"github.com/anchore/syft/syft/source"
 )
 
-func RunGrype(config_g config.GrypeConfig, config_v config.VulntronConfig, message string) (string, string, error) {
+func RunGrype(config config.Config, message string) (string, error) {
 
 	dbConfig := grype_db.Config{
-		DBRootDir:           config_g.DBRootDir,
-		ListingURL:          config_g.ListingURL,
-		ValidateByHashOnGet: config_g.ValidateByHashOnGet,
+		DBRootDir:           config.Grype.DBRootDir,
+		ListingURL:          config.Grype.ListingURL,
+		ValidateByHashOnGet: config.Grype.ValidateByHashOnGet,
 	}
 
 	store, dbStatus, _, err := grype.LoadVulnerabilityDB(dbConfig, true)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to load vulnerability DB: %w", err)
+		return "", fmt.Errorf("failed to load vulnerability DB: %w", err)
 	}
 
 	log.Printf("Running grype for message: %s", message)
@@ -40,14 +40,14 @@ func RunGrype(config_g config.GrypeConfig, config_v config.VulntronConfig, messa
 
 	scope, err := source.Detect(imageTag, source.DefaultDetectConfig())
 	if err != nil {
-		return "", "", fmt.Errorf("failed to detect source: %w", err)
+		return "", fmt.Errorf("failed to detect source: %w", err)
 	}
 
 	log.Printf("Detected source: %v", scope)
 
 	src, err := scope.NewSource(source.DefaultDetectionSourceConfig())
 	if err != nil {
-		return "", "", fmt.Errorf("failed to create source: %w", err)
+		return "", fmt.Errorf("failed to create source: %w", err)
 	}
 
 	result := sbom.SBOM{
@@ -64,7 +64,7 @@ func RunGrype(config_g config.GrypeConfig, config_v config.VulntronConfig, messa
 
 	packageCatalog, relationships, theDistro, err := syft.CatalogPackages(src, cfg)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to catalog packages: %w", err)
+		return "", fmt.Errorf("failed to catalog packages: %w", err)
 	}
 
 	result.Artifacts.Packages = packageCatalog
@@ -83,7 +83,7 @@ func RunGrype(config_g config.GrypeConfig, config_v config.VulntronConfig, messa
 
 	packages, context, _, err := pkg.Provide(message, providerConfig)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to analyze packages: %w", err)
+		return "", fmt.Errorf("failed to analyze packages: %w", err)
 	}
 
 	vulnerabilityMatcher := grype.VulnerabilityMatcher{
@@ -95,7 +95,7 @@ func RunGrype(config_g config.GrypeConfig, config_v config.VulntronConfig, messa
 	allMatches, ignoredMatches, err := vulnerabilityMatcher.FindMatches(packages, context)
 
 	if err != nil {
-		return "", "", fmt.Errorf("failed to find vulnerabilities: %w", err)
+		return "", fmt.Errorf("failed to find vulnerabilities: %w", err)
 	}
 	id := clio.Identification{
 		Name:    "grype",
@@ -104,7 +104,7 @@ func RunGrype(config_g config.GrypeConfig, config_v config.VulntronConfig, messa
 
 	doc, err := models.NewDocument(id, packages, context, *allMatches, ignoredMatches, store.MetadataProvider, nil, dbStatus)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to create document: %w", err)
+		return "", fmt.Errorf("failed to create document: %w", err)
 	}
 
 	var buf bytes.Buffer
@@ -113,34 +113,29 @@ func RunGrype(config_g config.GrypeConfig, config_v config.VulntronConfig, messa
 
 	// Encode the scan results to JSON using the JSON encoder
 	if err := jsonEncoder.Encode(doc); err != nil {
-		return "", "", fmt.Errorf("failed to encode JSON: %w", err)
+		return "", fmt.Errorf("failed to encode JSON: %w", err)
 	}
 
-	var res string
-	var fileName string
-
-	if config_v.SaveJSON {
-		fileName = utils.GenerateFileName(imageTag, "grype")
-		file, err := os.Create(fileName)
-		if err != nil {
-			return "", "", fmt.Errorf("failed to create or open file: %w", err)
-		}
-		defer file.Close()
-
-		res, err := utils.PrettyString(buf.String())
-		if err != nil {
-			fmt.Println(err)
-		}
-
-		// Write syftOut content to the file
-		_, err = file.Write([]byte(res))
-		if err != nil {
-			return "", "", fmt.Errorf("failed to write to file: %w", err)
-		}
-		log.Printf("JSON grype data has been written to %s", fileName)
+	fileName := utils.GenerateFileName(imageTag, "grype")
+	file, err := os.Create(fileName)
+	if err != nil {
+		return "", fmt.Errorf("failed to create or open file: %w", err)
 	}
+	defer file.Close()
+
+	res, err := utils.PrettyString(buf.String())
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	// Write syftOut content to the file
+	_, err = file.Write([]byte(res))
+	if err != nil {
+		return "", fmt.Errorf("failed to write to file: %w", err)
+	}
+	log.Printf("JSON grype of size %d data has been written to %s", len(res), fileName)
 
 	stereoscope.Cleanup()
 
-	return res, fileName, err
+	return fileName, err
 }

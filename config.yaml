@@ -1,5 +1,4 @@
 vulntron:
-  save_json: true
   run_type: "auto"
   cluster_URL: "https://api.crc-eph.r9lp.p1.openshiftapps.com:6443"
   logging: 
@@ -8,17 +7,6 @@ vulntron:
     log_file_location: "/tmp/vulntron/log/"
     log_file_name: ""
 
-# syft configuration
-syft:
-  db_root_dir: "/tmp/vulntron/"
-  validate_by_hash_on_get: false
-
-# grype configuration
-grype:
-  db_root_dir: "/tmp/vulntron/"
-  listing_url: "https://toolbox-data.anchore.io/grype/databases/listing.json"
-  validate_by_hash_on_get: false
-  
 defect_dojo:
   url: "http://localhost:8080"
   username: "admin"
@@ -26,4 +14,26 @@ defect_dojo:
   enable_deduplication: true
   delete_duplicates: true
   max_duplicates: 0
+
+scan_types:
+  - name: "Anchore Grype"
+    engName: "Grype_eng"
+    function: "RunGrype"
+    enabled: true
+  - name: "Trivy Scan"
+    engName: "Trivy_eng"
+    function: "RunTrivy"
+    enabled: true
+
+
+# ADDITIONAL CONFIGS
+# syft configuration
+syft:
+  db_root_dir: "/tmp/vulntron/"
   
+# grype configuration
+grype:
+  db_root_dir: "/tmp/vulntron/"
+  listing_url: "https://toolbox-data.anchore.io/grype/databases/listing.json"
+  validate_by_hash_on_get: false
+    
