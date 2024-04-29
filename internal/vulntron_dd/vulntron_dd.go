@@ -463,6 +463,29 @@ func UpdateSystemSettings(ctx *context.Context, client *dd.ClientWithResponses, 
 	return nil
 }
 
+func UpdateSlackSettings(ctx *context.Context, client *dd.ClientWithResponses, id int, slackChannel, slackToken string) error {
+	// Prepare request body
+	settingsUpdate := dd.SystemSettingsUpdateJSONRequestBody{
+		SlackChannel: &slackChannel,
+		SlackToken:   &slackToken,
+	}
+
+	// Update system settings
+	apiResp, err := client.SystemSettingsUpdateWithResponse(*ctx, id, settingsUpdate)
+	if err != nil {
+		log.Printf("Error updating slack system settings: %v", err)
+		return fmt.Errorf("error updating slack system settings: %w", err)
+	}
+
+	if apiResp.StatusCode() != http.StatusOK {
+		log.Printf("Unexpected status code during slack settings update: %d", apiResp.StatusCode())
+		return fmt.Errorf("unexpected status code: %d", apiResp.StatusCode())
+	}
+
+	log.Printf("Slack notifications settings for profile %d updated successfully.", id)
+	return nil
+}
+
 func DeleteProductTypes(ctx *context.Context, client *dd.ClientWithResponses) error {
 	// List all product types to get their IDs
 	productTypes, err := ListProductTypes(ctx, client)

@@ -8,12 +8,10 @@ vulntron:
     log_file_name: ""
 
 defect_dojo:
-  url: "http://localhost:8080"
-  username: "admin"
-  password: "Password1."
   enable_deduplication: true
   delete_duplicates: true
   max_duplicates: 0
+  slack_notifications: true
 
 scan_types:
   - name: "Anchore Grype"
