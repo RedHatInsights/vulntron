@@ -34,6 +34,7 @@ func GenerateFileName(value, input string) string {
 	return fmt.Sprintf("/tmp/vulntron/%s_%s_%s.json", lastElement, input, currentTime)
 }
 
+// Format JSON output
 func PrettyString(str string) (string, error) {
 	var prettyJSON bytes.Buffer
 	if err := json.Indent(&prettyJSON, []byte(str), "", " "); err != nil {
@@ -42,6 +43,7 @@ func PrettyString(str string) (string, error) {
 	return prettyJSON.String(), nil
 }
 
+// Compare two lists for unique elements
 func CompareLists(list1, list2 []string) bool {
 	// Create maps to store the counts of occurrences for each list
 	countMap1 := make(map[string]int)

@@ -17,10 +17,12 @@ import (
 	"github.com/anchore/syft/syft/source"
 )
 
-func RunSyft(config config.VulntronConfig, message string) (string, error) {
-	log.Printf("Running syft for message: %s", message)
-	imageTag := string(message)
+// Execute Syft scan on the image
+func RunSyft(config config.VulntronConfig, image string) (string, error) {
+	log.Printf("Running syft for image: %s", image)
+	imageTag := string(image)
 
+	// Detect image source
 	scope, err := source.Detect(imageTag, source.DefaultDetectConfig())
 	if err != nil {
 		return "", fmt.Errorf("failed to detect source: %w", err)
@@ -43,6 +45,7 @@ func RunSyft(config config.VulntronConfig, message string) (string, error) {
 	cfg := cataloger.DefaultConfig()
 	cfg.Search.Scope = source.AllLayersScope
 
+	// Catalog SBOM packages
 	packageCatalog, relationships, theDistro, err := syft.CatalogPackages(src, cfg)
 	if err != nil {
 		return "", fmt.Errorf("failed to catalog packages: %w", err)
@@ -82,6 +85,7 @@ func RunSyft(config config.VulntronConfig, message string) (string, error) {
 	}
 	log.Printf("JSON syft data has been written to %s", fileName)
 
+	// Cleanup pulled images
 	stereoscope.Cleanup()
 
 	return string(indentedJSON), nil

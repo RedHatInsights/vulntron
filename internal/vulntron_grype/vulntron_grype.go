@@ -22,22 +22,26 @@ import (
 	"github.com/anchore/syft/syft/source"
 )
 
-func RunGrype(config config.Config, message string) (string, error) {
+// Execute Grype scan on specified image
+func RunGrype(config config.Config, image string) (string, error) {
 
+	// Setup grype config
 	dbConfig := grype_db.Config{
 		DBRootDir:           config.Grype.DBRootDir,
 		ListingURL:          config.Grype.ListingURL,
 		ValidateByHashOnGet: config.Grype.ValidateByHashOnGet,
 	}
 
+	// Load Grype Vulnerability database
 	store, dbStatus, _, err := grype.LoadVulnerabilityDB(dbConfig, true)
 	if err != nil {
 		return "", fmt.Errorf("failed to load vulnerability DB: %w", err)
 	}
 
-	log.Printf("Running grype for message: %s", message)
-	imageTag := string(message)
+	log.Printf("Running grype for image: %s", image)
+	imageTag := string(image)
 
+	// Detect the image source
 	scope, err := source.Detect(imageTag, source.DefaultDetectConfig())
 	if err != nil {
 		return "", fmt.Errorf("failed to detect source: %w", err)
@@ -62,6 +66,7 @@ func RunGrype(config config.Config, message string) (string, error) {
 	cfg := cataloger.DefaultConfig()
 	cfg.Search.Scope = source.AllLayersScope
 
+	// Catalog SBOM packages
 	packageCatalog, relationships, theDistro, err := syft.CatalogPackages(src, cfg)
 	if err != nil {
 		return "", fmt.Errorf("failed to catalog packages: %w", err)
@@ -81,7 +86,7 @@ func RunGrype(config config.Config, message string) (string, error) {
 	}
 	providerConfig.CatalogingOptions.Search.Scope = source.AllLayersScope
 
-	packages, context, _, err := pkg.Provide(message, providerConfig)
+	packages, context, _, err := pkg.Provide(image, providerConfig)
 	if err != nil {
 		return "", fmt.Errorf("failed to analyze packages: %w", err)
 	}
@@ -102,6 +107,7 @@ func RunGrype(config config.Config, message string) (string, error) {
 		Version: "0.96.0",
 	}
 
+	// Store found Vulnerabilities
 	doc, err := models.NewDocument(id, packages, context, *allMatches, ignoredMatches, store.MetadataProvider, nil, dbStatus)
 	if err != nil {
 		return "", fmt.Errorf("failed to create document: %w", err)
@@ -135,6 +141,7 @@ func RunGrype(config config.Config, message string) (string, error) {
 	}
 	log.Printf("JSON grype of size %d data has been written to %s", len(res), fileName)
 
+	// Clean pulled images
 	stereoscope.Cleanup()
 
 	return fileName, err

@@ -75,7 +75,7 @@ func TokenInit(username, password, url string, ctx *context.Context) (*dd.Client
 
 func ListProductTypes(ctx *context.Context, client *dd.ClientWithResponses) (*dd.PaginatedProductTypeList, error) {
 	// List product types
-	limit := 1000
+	limit := 10000
 	apiRespProductType, err := client.ProductTypesListWithResponse(*ctx, &dd.ProductTypesListParams{Limit: &limit})
 	if err != nil {
 		log.Printf("Error listing product types: %v", err)
@@ -470,7 +470,7 @@ func UpdateSlackSettings(ctx *context.Context, client *dd.ClientWithResponses, i
 		SlackToken:   &slackToken,
 	}
 
-	// Update system settings
+	// Update slack system settings
 	apiResp, err := client.SystemSettingsUpdateWithResponse(*ctx, id, settingsUpdate)
 	if err != nil {
 		log.Printf("Error updating slack system settings: %v", err)

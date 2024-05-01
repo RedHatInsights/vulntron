@@ -1,3 +1,4 @@
+# Vulntron tool general config
 vulntron:
   run_type: "auto"
   cluster_URL: "https://api.crc-eph.r9lp.p1.openshiftapps.com:6443"
@@ -7,12 +8,14 @@ vulntron:
     log_file_location: "/tmp/vulntron/log/"
     log_file_name: ""
 
+# DefectDojo specific config
 defect_dojo:
   enable_deduplication: true
   delete_duplicates: true
   max_duplicates: 0
   slack_notifications: true
 
+# Scanner types config
 scan_types:
   - name: "Anchore Grype"
     engName: "Grype_eng"
@@ -24,7 +27,7 @@ scan_types:
     enabled: true
 
 
-# ADDITIONAL CONFIGS
+# Additional scanner config
 # syft configuration
 syft:
   db_root_dir: "/tmp/vulntron/"

@@ -14,19 +14,49 @@ import (
 	vulntronauto "github.com/RedHatInsights/Vulntron/internal/vulntron_auto"
 	"github.com/RedHatInsights/Vulntron/internal/vulntron_dd"
 	vulntronkafka "github.com/RedHatInsights/Vulntron/internal/vulntron_kafka"
-
 	dd "github.com/doximity/defect-dojo-client-go"
-
-	_ "github.com/lib/pq"
 )
 
-var (
-	cfgFile string
-)
-
-func init() {
-	// Command-line flags
+func main() {
+	// Command-line flag setup for specifying the configuration file location
+	var cfgFile string
 	flag.StringVar(&cfgFile, "config", "config.yaml", "Config file location")
+	flag.Parse()
+
+	// Load configuration from the specified file
+	cfg, err := loadConfiguration(cfgFile)
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
+
+	// Setup logging according to the configuration
+	setupLogging(cfg.Vulntron)
+
+	// Establish a new context for future API calls
+	ctx := context.Background()
+
+	// Initialize DefectDojo API client
+	client, err := initializeDefectDojoClient(&ctx)
+	if err != nil {
+		log.Fatalf("Failed to initialize DefectDojo client: %v", err)
+	}
+
+	// Validate system settings from DefectDojo against configuration
+	validateSystemSettings(&ctx, client, cfg)
+	if cfg.DefectDojo.SlackNotifications {
+		// Validate Slack notification settings
+		validateSlackNotificationSettings(&ctx, client, cfg)
+	}
+
+	// Process data based on the run type specified in configuration
+	switch cfg.Vulntron.RunType {
+	case "auto":
+		vulntronauto.ProcessAutoMode(cfg, &ctx, client)
+	case "kafka":
+		vulntronkafka.ProcessKafkaMode()
+	default:
+		log.Fatalf("Invalid run type '%s': use 'auto' or 'kafka'", cfg.Vulntron.RunType)
+	}
 }
 
 // Initialize logging based on configuration
@@ -60,6 +90,7 @@ func setupLogging(cfg config.VulntronConfig) {
 	log.Printf("Logging successfully initialized")
 }
 
+// Load configuration into predefined structure
 func loadConfiguration(filePath string) (config.Config, error) {
 	config, err := config.ReadConfig(filePath)
 	if err != nil {
@@ -70,6 +101,7 @@ func loadConfiguration(filePath string) (config.Config, error) {
 	return config, nil
 }
 
+// Initialize and return a DefectDojo client
 func initializeDefectDojoClient(ctx *context.Context) (*dd.ClientWithResponses, error) {
 	client, err := vulntron_dd.TokenInit(os.Getenv("DEFECT_DOJO_USERNAME"), os.Getenv("DEFECT_DOJO_PASSWORD"), os.Getenv("DEFECT_DOJO_URL"), ctx)
 	if err != nil {
@@ -78,6 +110,7 @@ func initializeDefectDojoClient(ctx *context.Context) (*dd.ClientWithResponses, 
 	return client, nil
 }
 
+// Check and update the system settings in DefectDojo to match the configuration
 func validateSystemSettings(ctx *context.Context, client *dd.ClientWithResponses, config config.Config) {
 	systemSettings, err := vulntron_dd.ListSystemSettings(ctx, client)
 	if err != nil {
@@ -105,6 +138,7 @@ func validateSystemSettings(ctx *context.Context, client *dd.ClientWithResponses
 	}
 }
 
+// Check and update the slack settings in DefectDojo to match the configuration
 func validateSlackNotificationSettings(ctx *context.Context, client *dd.ClientWithResponses, config config.Config) {
 	systemSettings, err := vulntron_dd.ListSystemSettings(ctx, client)
 	if err != nil {
@@ -114,8 +148,7 @@ func validateSlackNotificationSettings(ctx *context.Context, client *dd.ClientWi
 	slackToken := os.Getenv("DEFECT_DOJO_SLACK_OAUTH")
 
 	for _, pt := range *systemSettings.Results {
-		if pt.MaxDupes == nil ||
-			*pt.EnableSlackNotifications != config.DefectDojo.SlackNotifications ||
+		if *pt.EnableSlackNotifications != config.DefectDojo.SlackNotifications ||
 			*pt.SlackChannel != slackChannel ||
 			*pt.SlackToken != slackToken {
 			log.Printf("Defect Dojo System slack settings are not correct!")
@@ -132,37 +165,5 @@ func validateSlackNotificationSettings(ctx *context.Context, client *dd.ClientWi
 		} else {
 			log.Printf("Defect Dojo Slack System settings match config.")
 		}
-	}
-}
-
-func main() {
-
-	flag.Parse()
-
-	config, err := loadConfiguration(cfgFile)
-	if err != nil {
-		log.Fatalf("Error reading config file: %v", err)
-	}
-
-	ctx := context.Background()
-	client, err := initializeDefectDojoClient(&ctx)
-	if err != nil {
-		log.Fatalf("Error initializing DefectDojo client: %v", err)
-	}
-
-	setupLogging(config.Vulntron)
-
-	validateSystemSettings(&ctx, client, config)
-
-	if config.DefectDojo.EnableDeduplication {
-		validateSlackNotificationSettings(&ctx, client, config)
-	}
-
-	if config.Vulntron.RunType == "auto" {
-		vulntronauto.ProcessAutoMode(config, &ctx, client)
-	} else if config.Vulntron.RunType == "kafka" {
-		vulntronkafka.ProcessKafkaMode()
-	} else {
-		log.Fatalf("Invalid message type. Please use either 'kafka' or 'auto'.")
 	}
 }

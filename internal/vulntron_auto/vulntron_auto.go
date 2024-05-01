@@ -26,18 +26,22 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+// PodInfo holds details about a individual scanned pod
 type PodInfo struct {
 	Pod_Name   string          `json:"Pod_Name"`
 	Namespace  string          `json:"Namespace"`
 	StartTime  string          `json:"StartTime"`
 	Containers []ContainerInfo `json:"Containers"`
 }
+
+// ContainerInfo holds information about a container within a pod
 type ContainerInfo struct {
 	Container_Name string `json:"Container_Name"`
 	Image          string `json:"Image"`
 	ImageID        string `json:"ImageID"`
 }
 
+// ScanType defines a structure for scanner types that are loaded from config
 type ScanType struct {
 	Name     string
 	EngName  string
@@ -45,6 +49,7 @@ type ScanType struct {
 	Enabled  bool
 }
 
+// Function signature for scan functions
 type ScanFunction func(cfg config.Config, imageID string) (string, error)
 
 var scanFunctionMap = map[string]ScanFunction{
@@ -53,6 +58,7 @@ var scanFunctionMap = map[string]ScanFunction{
 	// "RunAnotherScanner": vulntron_other.RunAnotherScanner
 }
 
+// Scanning process for the auto mode
 func ProcessAutoMode(config config.Config, ctx *context.Context, client *dd.ClientWithResponses) {
 
 	ocToken := os.Getenv("OC_TOKEN")
@@ -71,18 +77,23 @@ func ProcessAutoMode(config config.Config, ctx *context.Context, client *dd.Clie
 		log.Fatalf("Error creating Kubernetes client: %v", err)
 	}
 
+	// Process and filter namespaces based on the provided list or regex
 	ocNamespaces := processNamespaces(clientset, namespacesString, namespacesRegex)
 
+	// Retrieve pod information from the cluster
 	allPodInfos := parseClusterData(clientset, ocNamespaces)
 
+	// Manage DefectDojo product types based on the namespaces
 	namespaceProductTypeIds := manageProductTypes(ctx, client, ocNamespaces)
 
+	// Begin scanning pods based on the collected information
 	scanPod(ctx, client, allPodInfos, namespaceProductTypeIds, config)
 
 	log.Print("Scanning complete!")
 
 }
 
+// Filter or list OpenShift namespaces based on a string list or regular expression
 func processNamespaces(clientset *kubernetes.Clientset, namespacesString, namespacesRegex string) []string {
 	var ocNamespaces []string
 	if namespacesRegex != "" {
@@ -91,6 +102,7 @@ func processNamespaces(clientset *kubernetes.Clientset, namespacesString, namesp
 			log.Fatalf("Error compiling regex: %v", err)
 		}
 
+		// List all namespaces and match against the compiled regex
 		namespaceList, err := clientset.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
 		if err != nil {
 			log.Fatalf("Error listing namespaces: %v", err)
@@ -102,11 +114,13 @@ func processNamespaces(clientset *kubernetes.Clientset, namespacesString, namesp
 			}
 		}
 	} else {
+		// Split the namespace list string into an array
 		ocNamespaces = strings.Split(namespacesString, ",")
 	}
 	return ocNamespaces
 }
 
+// Retrieve information about all pods within specified namespaces
 func parseClusterData(clientset *kubernetes.Clientset, ocNamespaces []string) []PodInfo {
 	var allPodInfos []PodInfo
 
@@ -131,6 +145,7 @@ func parseClusterData(clientset *kubernetes.Clientset, ocNamespaces []string) []
 					}
 				}
 
+				// Attempt to retrieve and format the full image descriptor if not found
 				if containerImageID == "" {
 					ref, err := name.ParseReference(container.Image)
 					if err != nil {
@@ -175,6 +190,7 @@ func parseClusterData(clientset *kubernetes.Clientset, ocNamespaces []string) []
 	return allPodInfos
 }
 
+// Ensure that a product type exists for each namespace, creating new ones as necessary
 func manageProductTypes(ctx *context.Context, client *dd.ClientWithResponses, ocNamespaces []string) map[string]int {
 	productTypes, err := vulntron_dd.ListProductTypes(ctx, client)
 	if err != nil {
@@ -218,6 +234,7 @@ func loadScanTypes(cfg config.Config) []ScanType {
 	return scanTypes
 }
 
+// Retrieves a scan function by name from the scanFunctionMap
 func getScanFunction(name string) ScanFunction {
 	if function, exists := scanFunctionMap[name]; exists {
 		return function
@@ -225,6 +242,7 @@ func getScanFunction(name string) ScanFunction {
 	return nil
 }
 
+// Orchestrate the scanning of each pod using the configured scan types and update engagement details
 func scanPod(ctx *context.Context, client *dd.ClientWithResponses, allPodInfos []PodInfo, namespaceProductTypeIds map[string]int, config config.Config) {
 	scannerStats := vulntronscannerstats.NewScannerStats()
 
@@ -253,6 +271,7 @@ func scanPod(ctx *context.Context, client *dd.ClientWithResponses, allPodInfos [
 	scannerStats.Print()
 }
 
+// Handles the creation or updating of engagements for each scan type
 func manageEngagementForScanType(ctx *context.Context, client *dd.ClientWithResponses, pod PodInfo, productIdInt int, scanType ScanType, config config.Config, scannerStats *vulntronscannerstats.ScannerStats) {
 	// Gather all image IDs for a collective engagement description
 	var containerInfo strings.Builder
@@ -293,6 +312,7 @@ func manageEngagementForScanType(ctx *context.Context, client *dd.ClientWithResp
 	}
 }
 
+// Conduct a scan for a specific container and scan type
 func scanImage(ctx *context.Context, client *dd.ClientWithResponses, container ContainerInfo, pod PodInfo, scanType ScanType, config config.Config) {
 	tests, err := vulntron_dd.ListTests(ctx, client, container.ImageID)
 	if err != nil {

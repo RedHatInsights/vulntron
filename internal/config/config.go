@@ -8,16 +8,19 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+// Configuration for the Syft tool
 type SyftConfig struct {
 	DBRootDir string `yaml:"db_root_dir"`
 }
 
+// Configuration for the Grype vulnerability scanner
 type GrypeConfig struct {
 	DBRootDir           string `yaml:"db_root_dir"`
 	ListingURL          string `yaml:"listing_url"`
 	ValidateByHashOnGet bool   `yaml:"validate_by_hash_on_get"`
 }
 
+// Main runtime configuration for the Vulntron application
 type VulntronConfig struct {
 	RunType    string `yaml:"run_type"`
 	ClusterURL string `yaml:"cluster_URL"`
@@ -29,6 +32,7 @@ type VulntronConfig struct {
 	} `yaml:"logging"`
 }
 
+// Configuration settings for DefectDojo integration
 type DefectDojoConfig struct {
 	EnableDeduplication bool `yaml:"enable_deduplication"`
 	DeleteDuplicates    bool `yaml:"delete_duplicates"`
@@ -36,6 +40,7 @@ type DefectDojoConfig struct {
 	SlackNotifications  bool `yaml:"slack_notifications"`
 }
 
+// Configuration for different scan types
 type ScanConfig struct {
 	Name     string `yaml:"name"`
 	EngName  string `yaml:"engName"`
@@ -43,6 +48,7 @@ type ScanConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 }
 
+// Aggregate all configuration structs
 type Config struct {
 	Syft       SyftConfig       `yaml:"syft"`
 	Grype      GrypeConfig      `yaml:"grype"`
@@ -51,6 +57,7 @@ type Config struct {
 	Scan       []ScanConfig     `yaml:"scan_types"`
 }
 
+// Read and decode the YAML configuration from a file
 func ReadConfig(filename string) (Config, error) {
 	var config Config
 
